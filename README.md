@@ -33,11 +33,50 @@ accounts add [--token <rt>]             add one (validates via /auth/refresh)
 accounts list | remove <id>
 keys mint --label L [--rpm N] [--daily-tokens N] | list | revoke <id>
 device from-app | show                  macOS: import the app's registered device key (shared)
+models status | probe                   per-model verdict; run one probe cycle now
+accounts exercise [--models a,b] [--dry-run] [--gap ms]
+                                        one real task per account, pinned round-robin
 ```
+
+## Model availability
+The relay advertises far more models than an account can use, and rejects the
+unusable ones with a 429 that looks exactly like a quota throttle. The gateway
+tells them apart by the quota headers: a real account throttle reports
+near-exhausted utilization or sends `retry-after`, while a model-level rejection
+arrives with the quota untouched. That distinction matters — treating one as the
+other used to cool every account in the pool over a model that would never work,
+taking the gateway down for healthy traffic too.
+
+Verdicts come from real traffic for free, plus a prober that only checks models
+whose verdict is missing or stale. They feed two things: requests for a known-dead
+model are refused with `model_unavailable` (400) before an account is spent, and
+`/v1/models` stops advertising them. Models with no verdict always pass through —
+the request is how the gateway finds out. Probe bodies deliberately ask for real
+output; `max_tokens: 1` is rejected as an invalid request, which would leave those
+models unprobeable forever.
+
+## Keeping accounts exercised
+`accounts exercise` runs one genuine task per account — reviewing this repo's own
+code and git history — and writes the answers to `data/exercise-<ts>.md`. The work
+is real rather than synthetic, so the output is worth reading (treat it as a
+draft: models produce confident false positives).
+
+Requests are **pinned per account** via `onlyAccount` rather than left to the
+pool. Pool selection sorts by utilization, so the busiest accounts are chosen last
+and a short round never reaches them — measured: 2 of 5 accounts went untouched
+before pinning.
+
+Cost is dominated by model choice, not prompt size. Two same-round requests of
+~2.7k and ~3.1k tokens moved the 7d window by 0.017pp on `claude-haiku-4-5` versus
+0.42pp on `claude-opus-4-8` — a 25× spread. Use `--models claude-haiku-4-5` for
+keep-alive: a full 5-account round then costs about 0.02pp each.
+`deploy/keepalive.plist` schedules it twice daily via launchd.
 
 ## Config (`config.json`, env overrides in CAPS)
 search provider/limit, allow/prefer/block domains, model aliases, deviceSigning,
-concurrency, cooldown/retry knobs. Secrets via env: `MIRASIM_MASTER_KEY`,
+concurrency, cooldown/retry knobs. Model probing: `modelProbeEnabled` (default
+on), `modelProbeIntervalMs` (15m), `modelProbeTtlMs` (6h — how long a verdict
+stays fresh), `modelProbeMaxPerCycle` (8). Secrets via env: `MIRASIM_MASTER_KEY`,
 `FIRECRAWL_API_KEY`, `MIRASIM_APP_VERSION`, `MIRASIM_RELAY`, `MIRASIM_LOGIN`.
 
 ## Docker

@@ -12,6 +12,9 @@ import { open as unseal } from "../crypto/secretbox.js";
 import { migrate, openDb } from "../db/client.js";
 import { keysRepo } from "../db/repositories/keys.js";
 import { sha256Hex } from "../gateway/util.js";
+import { runRound } from "../keepalive/runner.js";
+import { summarizeRound } from "../keepalive/summary.js";
+import { buildTasks } from "../keepalive/tasks.js";
 import { buildRuntime } from "../runtime.js";
 
 function parseArgs(argv: string[]): { _: string[]; flags: Record<string, string | boolean> } {
@@ -42,11 +45,119 @@ async function cmdServe(cfg: AppConfig) {
   const accts = rt.store.list();
   if (cfg.host !== "127.0.0.1" && cfg.host !== "localhost" && rt.keys.count() === 0)
     log("⚠️  bound to non-loopback host with NO downstream keys (open mode). Set PROXY keys before exposing.");
+  if (cfg.modelProbeEnabled) rt.prober.start();
   serve({ fetch: rt.app.fetch, hostname: cfg.host, port: cfg.port }, (info) => {
     log(
-      `mirasim-gateway http://${cfg.host}:${info.port}  accounts=${accts.length} provider=${cfg.searchProvider} signing=${cfg.deviceSigning ? "on" : "off"} auth=${rt.keys.count() > 0 ? "on" : "off"}`,
+      `mirasim-gateway http://${cfg.host}:${info.port}  accounts=${accts.length} provider=${cfg.searchProvider} signing=${cfg.deviceSigning ? "on" : "off"} auth=${rt.keys.count() > 0 ? "on" : "off"} probe=${cfg.modelProbeEnabled ? `${Math.round(cfg.modelProbeIntervalMs / 1000)}s` : "off"}`,
     );
   });
+}
+
+async function cmdModelsStatus(cfg: AppConfig) {
+  const rt = buildRuntime(cfg);
+  const rows = rt.modelStatus.list();
+  if (!rows.length) {
+    log("no models recorded yet — run `models probe` or send a request");
+    return;
+  }
+  const age = (ms: number) => (ms ? `${Math.round((Date.now() - ms) / 1000)}s ago` : "never");
+  for (const r of rows)
+    log(
+      `${r.model.padEnd(38)}${r.state.padEnd(13)}${String(r.lastStatus || "-").padEnd(6)}${age(r.lastCheckedAt).padEnd(14)}${r.servedModel ? `→ served ${r.servedModel}` : ""}`,
+    );
+}
+
+const EXERCISE_FILES = [
+  "src/models/classify.ts",
+  "src/accounts/pool.ts",
+  "src/models/prober.ts",
+  "src/gateway/app.ts",
+  "src/keepalive/summary.ts",
+];
+
+async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string | boolean>) {
+  const rt = buildRuntime(cfg);
+  // Only models proven good and serving what they claim: a LiteLLM fallback
+  // (servedModel set) would silently bill a different model than intended.
+  const known = rt.modelStatus
+    .list()
+    .filter((m) => m.state === "ok" && !m.servedModel && m.model.startsWith("claude-"))
+    .map((m) => m.model);
+  const wanted =
+    typeof flags.models === "string"
+      ? String(flags.models)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : null;
+  const usable = wanted ? known.filter((m) => wanted.includes(m)) : known;
+  if (!usable.length) {
+    log(
+      wanted
+        ? `none of the requested models are currently known-good (have: ${known.join(", ") || "none"})`
+        : "no model is currently known-good — run `models probe` first",
+    );
+    process.exit(1);
+  }
+
+  let gitLog = "";
+  try {
+    gitLog = execFileSync("git", ["log", "--oneline", "-12", "--stat"], { encoding: "utf8" });
+  } catch {}
+  const files: Record<string, string> = {};
+  for (const p of EXERCISE_FILES) {
+    try {
+      files[p] = fs.readFileSync(p, "utf8");
+    } catch {}
+  }
+
+  const tasks = buildTasks({ models: usable, gitLog, files });
+  log(`exercising ${rt.store.list().length} accounts with ${tasks.length} real tasks over ${usable.length} models`);
+  if (flags["dry-run"]) {
+    for (const t of tasks) log(`  ${t.label.padEnd(34)} ${t.model.padEnd(20)} ~${t.prompt.length} chars in`);
+    return;
+  }
+
+  const started = Date.now();
+  const { events, outputs } = await runRound({
+    pool: rt.pool,
+    usage: rt.usage,
+    tasks,
+    accountIds: rt.store.list().map((a) => a.id),
+    gapMs: flags.gap ? Number(flags.gap) : 3000,
+    onResult: (r) =>
+      log(
+        `  ${r.label.padEnd(34)} ${String(r.status).padEnd(4)} ${(r.accountId || "-").slice(0, 16).padEnd(18)}${r.inputTokens}→${r.outputTokens} tok  ${r.latencyMs}ms`,
+      ),
+  });
+
+  const summary = summarizeRound(
+    events,
+    rt.store.list().map((a) => a.id),
+  );
+  log("");
+  log("account                             reqs  in      out     fails  avg latency");
+  for (const [id, t] of Object.entries(summary.perAccount))
+    log(
+      `${id.padEnd(38)}${String(t.requests).padEnd(6)}${String(t.inputTokens).padEnd(8)}${String(t.outputTokens).padEnd(8)}${String(t.failures).padEnd(7)}${t.avgLatencyMs}ms`,
+    );
+  log(`\ntotal ${summary.totalTokens} tokens in ${Math.round((Date.now() - started) / 1000)}s`);
+  if (summary.untouched.length) log(`⚠️  never exercised this round: ${summary.untouched.join(", ")}`);
+
+  const outFile = path.join(cfg.dataDir, `exercise-${new Date(started).toISOString().replace(/[:.]/g, "-")}.md`);
+  fs.writeFileSync(
+    outFile,
+    outputs
+      .map((o) => `## ${o.label}\n\n_${o.model} · ${o.accountId} · HTTP ${o.status}_\n\n${o.text}\n`)
+      .join("\n---\n\n"),
+  );
+  log(`output written to ${outFile}`);
+}
+
+async function cmdModelsProbe(cfg: AppConfig) {
+  const rt = buildRuntime(cfg);
+  const done = await rt.prober.runOnce();
+  log(done.length ? `probed ${done.length}: ${done.join(", ")}` : "nothing due for probing");
 }
 
 function storeFor(cfg: AppConfig) {
@@ -187,6 +298,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (_[1] === "add") return cmdAccountsAdd(cfg, flags);
       if (_[1] === "list") return cmdAccountsList(cfg);
       if (_[1] === "remove") return cmdAccountsRemove(cfg, _[2]!);
+      if (_[1] === "exercise") return cmdAccountsExercise(cfg, flags);
       break;
     case "keys":
       if (_[1] === "mint") return cmdKeysMint(cfg, flags);
@@ -197,9 +309,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (_[1] === "from-app") return cmdDeviceFromApp(cfg);
       if (_[1] === "show") return cmdDeviceShow(cfg);
       break;
+    case "models":
+      if (_[1] === "status") return cmdModelsStatus(cfg);
+      if (_[1] === "probe") return cmdModelsProbe(cfg);
+      break;
   }
   log(
-    "usage: mirasim-gateway <serve|migrate|accounts (import|add|list|remove)|keys (mint|list|revoke)|device (from-app|show)>",
+    "usage: mirasim-gateway <serve|migrate|accounts (import|add|list|remove|exercise)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
   );
   process.exit(1);
 }
