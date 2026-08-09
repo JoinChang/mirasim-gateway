@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config/index.js";
 import type { Dialect, GatewayResult } from "../types/wire.js";
+import { usageTotalsFrom } from "../usage/tokens.js";
 import { type DialectAdapter, runWebSearchLoop } from "../websearch/loop.js";
 import type { DialectDeps } from "./deps.js";
 
@@ -39,7 +40,8 @@ export async function runDialect(
       betas,
     });
     if (stream && response.status === 200) return { type: "stream", response, accountId };
-    return { type: "json", status: response.status, json: await response.json().catch(() => null), accountId };
+    const json = await response.json().catch(() => null);
+    return { type: "json", status: response.status, json, accountId, usage: usageTotalsFrom(json) };
   }
 
   const out = await runWebSearchLoop({

@@ -1,3 +1,5 @@
+import type { UsageTotals } from "../types/wire.js";
+
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 /**
@@ -25,4 +27,18 @@ export function totalInputTokens(usage: any): number {
 export function totalOutputTokens(usage: any): number {
   if (usage == null || typeof usage !== "object") return 0;
   return num(usage.output_tokens) || num(usage.completion_tokens);
+}
+
+/**
+ * Totals for a complete response body. The only place a body is read for usage —
+ * the streaming path measures as it flows, and the search loop sums its own hops.
+ */
+export function usageTotalsFrom(json: any): UsageTotals {
+  const u = json?.usage;
+  const searches = u?.server_tool_use?.web_search_requests ?? u?.web_search_requests ?? 0;
+  return {
+    inputTokens: totalInputTokens(u),
+    outputTokens: totalOutputTokens(u),
+    webSearchRequests: Number(searches) || 0,
+  };
 }

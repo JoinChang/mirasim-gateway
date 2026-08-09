@@ -1,6 +1,5 @@
 import { desc } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import type { Pool } from "../../src/accounts/pool.js";
 import { accountStore } from "../../src/accounts/store.js";
 import { loadConfig } from "../../src/config/index.js";
 import { memDb } from "../../src/db/client.js";

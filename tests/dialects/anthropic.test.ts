@@ -61,4 +61,17 @@ describe("anthropic dialect", () => {
     const out = await runDialect(messagesDialect, d as any, { model: "c", messages: [] }, true);
     expect(out.type).toBe("stream");
   });
+
+  it("passthrough json carries its own usage totals, cache included", async () => {
+    const d = deps([
+      () =>
+        R({
+          content: [{ type: "text", text: "hi" }],
+          usage: { input_tokens: 9, cache_read_input_tokens: 4804, output_tokens: 5 },
+        }),
+    ]);
+    const out = await runDialect(messagesDialect, d as any, { model: "c", messages: [] }, false);
+    expect(out.type).toBe("json");
+    expect((out as any).usage).toEqual({ inputTokens: 4813, outputTokens: 5, webSearchRequests: 0 });
+  });
 });

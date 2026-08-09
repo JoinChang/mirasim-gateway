@@ -1,4 +1,4 @@
-import type { Dialect, SearchRow } from "../types/wire.js";
+import type { Dialect, SearchRow, UsageTotals } from "../types/wire.js";
 import { totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
 
 export interface DialectAdapter {
@@ -25,8 +25,8 @@ export interface LoopResult {
    * records each account's utilisation from the relay headers on every hop.
    */
   accountId?: string;
-  /** Tokens across every hop. Reporting only the final hop hid the rest. */
-  usage: { inputTokens: number; outputTokens: number };
+  /** Tokens across every hop, plus the searches run. Reporting only the final hop hid the rest. */
+  usage: UsageTotals;
 }
 
 export async function runWebSearchLoop(params: {
@@ -41,7 +41,7 @@ export async function runWebSearchLoop(params: {
   let searches = 0;
   let last: any = null;
   let accountId: string | undefined;
-  const usage = { inputTokens: 0, outputTokens: 0 };
+  const usage: UsageTotals = { inputTokens: 0, outputTokens: 0, webSearchRequests: 0 };
   for (let h = 0; h < maxHops; h++) {
     const r = await hop(adapter.body());
     accountId = r.accountId ?? accountId;
@@ -55,6 +55,7 @@ export async function runWebSearchLoop(params: {
     const results: { id: string; query: string; rows: SearchRow[] }[] = [];
     for (const c of calls) {
       searches++;
+      usage.webSearchRequests++;
       results.push({ id: c.id, query: c.query, rows: await search(c.query) });
     }
     adapter.onToolResults(results);

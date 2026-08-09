@@ -1,3 +1,6 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+
 export interface RepoContext {
   /** Models currently believed usable — work is only ever sent to these. */
   models: string[];
@@ -60,3 +63,55 @@ export function buildTasks(ctx: RepoContext): Task[] {
 
   return tasks;
 }
+
+/**
+ * Where the material comes from. Injected so gathering is testable without a
+ * filesystem or a git checkout — and so the container, which has neither git nor
+ * this repo's history, degrades to file-only material instead of failing.
+ */
+export interface MaterialSource {
+  /** Null when unreadable, rather than throwing. */
+  readText(path: string): string | null;
+  /** Recent history as text; empty when unavailable. */
+  gitLog(): string;
+}
+
+/**
+ * The files a keep-alive round reviews. Deciding this belongs with the module that
+ * builds the tasks — it used to live in the CLI, so changing what the keep-alive
+ * looked at meant editing a command.
+ */
+export const REVIEWED_FILES = [
+  "src/models/classify.ts",
+  "src/accounts/pool.ts",
+  "src/models/prober.ts",
+  "src/gateway/app.ts",
+  "src/keepalive/summary.ts",
+];
+
+export function gatherMaterial(src: MaterialSource): { gitLog: string; files: Record<string, string> } {
+  const files: Record<string, string> = {};
+  for (const path of REVIEWED_FILES) {
+    const text = src.readText(path);
+    if (text != null) files[path] = text;
+  }
+  return { gitLog: src.gitLog(), files };
+}
+
+/** Reads the working tree it is running in. */
+export const nodeMaterialSource: MaterialSource = {
+  readText: (path) => {
+    try {
+      return fs.readFileSync(path, "utf8");
+    } catch {
+      return null;
+    }
+  },
+  gitLog: () => {
+    try {
+      return execFileSync("git", ["log", "--oneline", "-12", "--stat"], { encoding: "utf8" });
+    } catch {
+      return "";
+    }
+  },
+};

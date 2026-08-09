@@ -66,7 +66,7 @@ describe("runWebSearchLoop", () => {
       maxUses: 5,
     });
     expect(hops).toBe(2);
-    expect(out.usage).toEqual({ inputTokens: 200, outputTokens: 20 });
+    expect(out.usage).toEqual({ inputTokens: 200, outputTokens: 20, webSearchRequests: 1 });
   });
 
   it("counts cached input in the per-hop totals", async () => {
@@ -88,7 +88,7 @@ describe("runWebSearchLoop", () => {
       search: async () => [],
       maxUses: 1,
     });
-    expect(out.usage).toEqual({ inputTokens: 4813, outputTokens: 5 });
+    expect(out.usage).toEqual({ inputTokens: 4813, outputTokens: 5, webSearchRequests: 0 });
   });
 
   it("reports which account served the answer", async () => {
@@ -130,5 +130,27 @@ describe("runWebSearchLoop", () => {
     });
     expect(out.status).toBe(429);
     expect(out.accountId).toBe("a9");
+  });
+
+  it("counts the searches it ran, so nobody has to re-read the body for it", async () => {
+    let hops = 0;
+    const adapter = {
+      kind: "messages",
+      body: () => ({}),
+      parseToolCalls: () => (hops < 2 ? [{ id: "t", query: "q" }] : []),
+      onAssistant() {},
+      onToolResults() {},
+      finalize: () => ({ status: 200, json: {} }),
+    } as DialectAdapter;
+    const out = await runWebSearchLoop({
+      adapter,
+      hop: async () => {
+        hops++;
+        return { status: 200, json: {}, accountId: "a1" };
+      },
+      search: async () => [],
+      maxUses: 5,
+    });
+    expect(out.usage.webSearchRequests).toBe(1);
   });
 });

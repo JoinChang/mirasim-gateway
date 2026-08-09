@@ -13,7 +13,7 @@ import { type DialectSpec, runDialect } from "../dialects/run.js";
 import type { Metrics } from "../metrics/registry.js";
 import type { GatewayResult, SearchRow } from "../types/wire.js";
 import { HOP_BY_HOP } from "../upstream/relay.js";
-import { extractUsage, type Recorder } from "../usage/recorder.js";
+import type { Recorder } from "../usage/recorder.js";
 import { meterStream } from "./streamUsage.js";
 import { applyModelAlias, sha256Hex, utcDayStartMs } from "./util.js";
 
@@ -88,18 +88,13 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
         viaRelay: true,
         latencyMs: Date.now() - started,
       });
-    // A search loop measured its own totals across every hop; the final body only
-    // carries the last one, so the measured figures win when present.
-    const totals = (r: { json?: any; usage?: { inputTokens: number; outputTokens: number } }) => {
-      const fromBody = extractUsage(r.json);
-      return r.usage ? { ...fromBody, ...r.usage } : fromBody;
-    };
+    // Whoever ran the request measured it; there is no second source to reconcile.
     if (result.type === "json") {
-      rec(result.status, result.accountId ?? null, totals(result));
+      rec(result.status, result.accountId ?? null, { ...result.usage, cost: null });
       return c.json(result.json, result.status);
     }
     if (result.type === "sse") {
-      rec(result.status ?? 200, result.accountId ?? null, totals(result));
+      rec(result.status ?? 200, result.accountId ?? null, { ...result.usage, cost: null });
       return new Response(result.text, {
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" },

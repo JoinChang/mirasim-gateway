@@ -2,7 +2,6 @@ import type { AccountsRepo } from "../db/repositories/accounts.js";
 import type { KeysRepo } from "../db/repositories/keys.js";
 import type { UsageRepo } from "../db/repositories/usage.js";
 import type { Metrics } from "../metrics/registry.js";
-import { totalInputTokens, totalOutputTokens } from "./tokens.js";
 
 export interface UsageInput {
   downstreamKeyId: string | null;
@@ -42,20 +41,3 @@ export function createRecorder(deps: { usage: UsageRepo; keys: KeysRepo; account
   };
 }
 export type Recorder = ReturnType<typeof createRecorder>;
-
-/** Best-effort token/cost extraction from an upstream JSON body. */
-export function extractUsage(json: any): {
-  inputTokens: number;
-  outputTokens: number;
-  webSearchRequests: number;
-  cost: number | null;
-} {
-  const u = json?.usage ?? {};
-  const webSearchRequests = u.server_tool_use?.web_search_requests ?? u.web_search_requests ?? 0;
-  return {
-    inputTokens: totalInputTokens(u),
-    outputTokens: totalOutputTokens(u),
-    webSearchRequests: Number(webSearchRequests) || 0,
-    cost: null,
-  };
-}

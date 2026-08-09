@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractUsage } from "../../src/usage/recorder.js";
-import { totalInputTokens, totalOutputTokens } from "../../src/usage/tokens.js";
+import { totalInputTokens, totalOutputTokens, usageTotalsFrom } from "../../src/usage/tokens.js";
 
 describe("totalInputTokens", () => {
   // Real numbers observed against the relay: a 4804-token cached system prompt
@@ -43,16 +42,23 @@ describe("totalOutputTokens", () => {
   });
 });
 
-describe("extractUsage", () => {
-  it("counts cached input on the non-streaming path too", () => {
-    const u = extractUsage({
+describe("usageTotalsFrom", () => {
+  it("counts cached input on a complete response body", () => {
+    const u = usageTotalsFrom({
       usage: { input_tokens: 9, cache_creation_input_tokens: 0, cache_read_input_tokens: 4804, output_tokens: 5 },
     });
-    expect(u.inputTokens).toBe(4813);
-    expect(u.outputTokens).toBe(5);
+    expect(u).toEqual({ inputTokens: 4813, outputTokens: 5, webSearchRequests: 0 });
   });
 
-  it("still reads web search counts", () => {
-    expect(extractUsage({ usage: { server_tool_use: { web_search_requests: 3 } } }).webSearchRequests).toBe(3);
+  it("reads the Anthropic web search count", () => {
+    expect(usageTotalsFrom({ usage: { server_tool_use: { web_search_requests: 3 } } }).webSearchRequests).toBe(3);
+  });
+
+  it("reads the OpenAI web search count", () => {
+    expect(usageTotalsFrom({ usage: { web_search_requests: 2 } }).webSearchRequests).toBe(2);
+  });
+
+  it("reports zeros for a body with no usage", () => {
+    expect(usageTotalsFrom(null)).toEqual({ inputTokens: 0, outputTokens: 0, webSearchRequests: 0 });
   });
 });

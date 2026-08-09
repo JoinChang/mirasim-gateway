@@ -14,7 +14,7 @@ import { keysRepo } from "../db/repositories/keys.js";
 import { sha256Hex } from "../gateway/util.js";
 import { runRound } from "../keepalive/runner.js";
 import { summarizeRound } from "../keepalive/summary.js";
-import { buildTasks } from "../keepalive/tasks.js";
+import { buildTasks, gatherMaterial, nodeMaterialSource } from "../keepalive/tasks.js";
 import { buildRuntime } from "../runtime.js";
 
 function parseArgs(argv: string[]): { _: string[]; flags: Record<string, string | boolean> } {
@@ -67,14 +67,6 @@ async function cmdModelsStatus(cfg: AppConfig) {
     );
 }
 
-const EXERCISE_FILES = [
-  "src/models/classify.ts",
-  "src/accounts/pool.ts",
-  "src/models/prober.ts",
-  "src/gateway/app.ts",
-  "src/keepalive/summary.ts",
-];
-
 async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string | boolean>) {
   const rt = buildRuntime(cfg);
   // Only models proven good and serving what they claim: a LiteLLM fallback
@@ -100,18 +92,7 @@ async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string 
     process.exit(1);
   }
 
-  let gitLog = "";
-  try {
-    gitLog = execFileSync("git", ["log", "--oneline", "-12", "--stat"], { encoding: "utf8" });
-  } catch {}
-  const files: Record<string, string> = {};
-  for (const p of EXERCISE_FILES) {
-    try {
-      files[p] = fs.readFileSync(p, "utf8");
-    } catch {}
-  }
-
-  const tasks = buildTasks({ models: usable, gitLog, files });
+  const tasks = buildTasks({ models: usable, ...gatherMaterial(nodeMaterialSource) });
   log(`exercising ${rt.store.list().length} accounts with ${tasks.length} real tasks over ${usable.length} models`);
   if (flags["dry-run"]) {
     for (const t of tasks) log(`  ${t.label.padEnd(34)} ${t.model.padEnd(20)} ~${t.prompt.length} chars in`);
