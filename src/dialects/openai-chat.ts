@@ -82,8 +82,9 @@ export async function handleOpenAIChat(
     search: deps.search,
     maxUses: 4,
   });
-  if (out.status !== 200) return { type: "json", status: out.status, json: out.json };
+  if (out.status !== 200)
+    return { type: "json", status: out.status, json: out.json, accountId: out.accountId, usage: out.usage };
   return stream
-    ? { type: "sse", text: chatSSE(out.json), json: out.json }
-    : { type: "json", status: 200, json: out.json };
+    ? { type: "sse", text: chatSSE(out.json), json: out.json, accountId: out.accountId, usage: out.usage }
+    : { type: "json", status: 200, json: out.json, accountId: out.accountId, usage: out.usage };
 }

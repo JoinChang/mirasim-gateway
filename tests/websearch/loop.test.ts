@@ -43,4 +43,92 @@ describe("runWebSearchLoop", () => {
     });
     expect(out.status).toBe(429);
   });
+
+  it("sums token usage across every hop, not just the last one", async () => {
+    // A search loop makes several upstream calls. Reporting only the final hop
+    // silently discarded the tokens the earlier ones cost.
+    let hops = 0;
+    const adapter = {
+      kind: "messages",
+      body: () => ({}),
+      parseToolCalls: () => (hops < 2 ? [{ id: "t", query: "q" }] : []),
+      onAssistant() {},
+      onToolResults() {},
+      finalize: (r: any) => ({ status: 200, json: r }),
+    } as DialectAdapter;
+    const out = await runWebSearchLoop({
+      adapter,
+      hop: async () => {
+        hops++;
+        return { status: 200, json: { usage: { input_tokens: 100, output_tokens: 10 } }, accountId: `acc${hops}` };
+      },
+      search: async () => [],
+      maxUses: 5,
+    });
+    expect(hops).toBe(2);
+    expect(out.usage).toEqual({ inputTokens: 200, outputTokens: 20 });
+  });
+
+  it("counts cached input in the per-hop totals", async () => {
+    const adapter = {
+      kind: "messages",
+      body: () => ({}),
+      parseToolCalls: () => [],
+      onAssistant() {},
+      onToolResults() {},
+      finalize: (r: any) => ({ status: 200, json: r }),
+    } as DialectAdapter;
+    const out = await runWebSearchLoop({
+      adapter,
+      hop: async () => ({
+        status: 200,
+        json: { usage: { input_tokens: 9, cache_read_input_tokens: 4804, output_tokens: 5 } },
+        accountId: "a1",
+      }),
+      search: async () => [],
+      maxUses: 1,
+    });
+    expect(out.usage).toEqual({ inputTokens: 4813, outputTokens: 5 });
+  });
+
+  it("reports which account served the answer", async () => {
+    let hops = 0;
+    const adapter = {
+      kind: "messages",
+      body: () => ({}),
+      parseToolCalls: () => (hops < 2 ? [{ id: "t", query: "q" }] : []),
+      onAssistant() {},
+      onToolResults() {},
+      finalize: () => ({ status: 200, json: {} }),
+    } as DialectAdapter;
+    const out = await runWebSearchLoop({
+      adapter,
+      hop: async () => {
+        hops++;
+        return { status: 200, json: {}, accountId: `acc${hops}` };
+      },
+      search: async () => [],
+      maxUses: 5,
+    });
+    expect(out.accountId).toBe("acc2");
+  });
+
+  it("carries the account through on an upstream failure too", async () => {
+    const adapter = {
+      kind: "chat",
+      body: () => ({}),
+      parseToolCalls: () => [],
+      onAssistant() {},
+      onToolResults() {},
+      finalize: () => ({ status: 200, json: {} }),
+    } as DialectAdapter;
+    const out = await runWebSearchLoop({
+      adapter,
+      hop: async () => ({ status: 429, json: { e: 1 }, accountId: "a9" }),
+      search: async () => [],
+      maxUses: 2,
+    });
+    expect(out.status).toBe(429);
+    expect(out.accountId).toBe("a9");
+  });
 });

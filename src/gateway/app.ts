@@ -87,12 +87,18 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
         viaRelay: true,
         latencyMs: Date.now() - started,
       });
+    // A search loop measured its own totals across every hop; the final body only
+    // carries the last one, so the measured figures win when present.
+    const totals = (r: { json?: any; usage?: { inputTokens: number; outputTokens: number } }) => {
+      const fromBody = extractUsage(r.json);
+      return r.usage ? { ...fromBody, ...r.usage } : fromBody;
+    };
     if (result.type === "json") {
-      rec(result.status, result.accountId ?? null, extractUsage(result.json));
+      rec(result.status, result.accountId ?? null, totals(result));
       return c.json(result.json, result.status);
     }
     if (result.type === "sse") {
-      rec(result.status ?? 200, result.accountId ?? null, extractUsage(result.json));
+      rec(result.status ?? 200, result.accountId ?? null, totals(result));
       return new Response(result.text, {
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" },

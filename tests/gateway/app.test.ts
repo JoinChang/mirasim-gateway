@@ -138,4 +138,31 @@ describe("gateway app", () => {
     );
     expect(execOptions[0]?.betas).toBe("context-1m-2025-08-07,claude-code-20250219");
   });
+
+  it("attributes a web_search request to an account and counts every hop", async () => {
+    // The search loop makes two upstream calls. It used to record neither the
+    // account nor the first hop's tokens.
+    const { app, db } = build({
+      script: [
+        () =>
+          R({
+            content: [{ type: "tool_use", id: "t1", name: "web_search", input: { query: "x" } }],
+            usage: { input_tokens: 100, output_tokens: 10 },
+          }),
+        () => R({ content: [{ type: "text", text: "answer" }], usage: { input_tokens: 200, output_tokens: 20 } }),
+      ],
+    });
+    const res = await post(app, "/v1/messages", {
+      model: "c",
+      messages: [{ role: "user", content: "q" }],
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+    });
+    expect(res.status).toBe(200);
+    const row: any = db.$client
+      .prepare("select account_id, input_tokens, output_tokens from usage_events order by ts desc limit 1")
+      .get();
+    expect(row.account_id).toBe("a1");
+    expect(row.input_tokens).toBe(300);
+    expect(row.output_tokens).toBe(30);
+  });
 });
