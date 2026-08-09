@@ -36,8 +36,8 @@
 
     "anthropic.com", "openai.com", "firecrawl.dev",
 
-    "reuters.com", "apnews.com", "bloomberg.com", "ft.com", "wsj.com", "nytimes.com", "bbc.com",
-    "theverge.com", "techcrunch.com", "arstechnica.com", "wired.com", "economist.com"
+    "reuters.com", "apnews.com", "bbc.com",
+    "theverge.com", "techcrunch.com", "arstechnica.com", "wired.com"
   ],
   "preferDomains": ["anthropic.com","openai.com","github.com","arxiv.org","wikipedia.org"],
   "blockDomains": ["pinterest.com","tiktok.com","facebook.com","8world.com"]
