@@ -12,10 +12,10 @@ describe("signing", () => {
     const h = signatureHeaders(
       generateIdentity(),
       { method: "POST", pathname: "/v1/messages", body: Buffer.from("{}") },
-      "0.0.148",
+      "0.0.149",
     );
     for (const k of ["x-mirasim-device", "x-mirasim-ts", "x-mirasim-nonce", "x-mirasim-sig", "x-mirasim-client"])
       expect(h[k]).toBeTruthy();
-    expect(h["x-mirasim-client"]).toBe("0.0.148");
+    expect(h["x-mirasim-client"]).toBe("0.0.149");
   });
 });

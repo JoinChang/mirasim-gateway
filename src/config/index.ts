@@ -78,7 +78,7 @@ export function loadConfig(input: { fileJson: Record<string, unknown>; env: Node
 
   return {
     ...validated,
-    appVersion: env.MIRASIM_APP_VERSION || "0.0.148",
+    appVersion: env.MIRASIM_APP_VERSION || "0.0.149",
     relayBase: stripSlash(env.MIRASIM_RELAY || "https://mirasim-relay.mirofish.ai"),
     loginBase: stripSlash(env.MIRASIM_LOGIN || "https://admin.test.mirofish.ai"),
     firecrawlKey: env.FIRECRAWL_API_KEY,
