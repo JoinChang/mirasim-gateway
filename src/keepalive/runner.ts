@@ -1,5 +1,6 @@
 import type { Pool } from "../accounts/pool.js";
 import type { UsageRepo } from "../db/repositories/usage.js";
+import { totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
 import type { RoundEvent } from "./summary.js";
 import type { Task } from "./tasks.js";
 
@@ -58,8 +59,10 @@ export async function runRound(opts: {
       accountId = res.accountId;
       status = res.response.status;
       const json: any = await res.response.json().catch(() => null);
-      inputTokens = json?.usage?.input_tokens ?? 0;
-      outputTokens = json?.usage?.output_tokens ?? 0;
+      // Same rule as the serving paths — a third private copy of this is how
+      // cached input came to be undercounted in the first place.
+      inputTokens = totalInputTokens(json?.usage);
+      outputTokens = totalOutputTokens(json?.usage);
       text = (json?.content ?? [])
         .filter((c: any) => c.type === "text")
         .map((c: any) => c.text)

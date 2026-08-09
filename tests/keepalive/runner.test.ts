@@ -6,13 +6,12 @@ import { R } from "../helpers/fakePool.js";
 
 const task = (label: string): Task => ({ label, model: "claude-haiku-4-5", maxTokens: 64, prompt: "p" });
 
-function fakePool() {
+function fakePool(usage: any = { input_tokens: 5, output_tokens: 3 }) {
   const pinned: Array<string | undefined> = [];
   const pool: Pool = {
     execute: async (_k, buildAndCall, _model, options?: ExecuteOptions) => {
       pinned.push(options?.onlyAccount);
-      const call = async () =>
-        R({ content: [{ type: "text", text: "ok" }], usage: { input_tokens: 5, output_tokens: 3 } });
+      const call = async () => R({ content: [{ type: "text", text: "ok" }], usage });
       return { response: await buildAndCall(call), accountId: options?.onlyAccount ?? "pool-choice" };
     },
     deviceIdentityFor: () => ({}) as any,
@@ -50,5 +49,11 @@ describe("runRound", () => {
     const { events } = await runRound({ pool, usage, tasks: [task("a")], accountIds: [] });
     expect(events).toEqual([]);
     expect(pinned).toEqual([]);
+  });
+
+  it("counts cached input like the rest of the gateway does", async () => {
+    const { pool, usage } = fakePool({ input_tokens: 9, cache_read_input_tokens: 4804, output_tokens: 5 });
+    const { events } = await runRound({ pool, usage, tasks: [task("a")], accountIds: ["acc1"] });
+    expect(events[0]).toMatchObject({ inputTokens: 4813, outputTokens: 5 });
   });
 });
