@@ -1,8 +1,8 @@
+import type { AppConfig } from "../config/index.js";
 import { chatSSE } from "../gateway/sse.js";
-import type { GatewayResult } from "../types/wire.js";
 import { openaiAnnotations, toModelToolResultText } from "../websearch/citations.js";
-import { type DialectAdapter, runWebSearchLoop } from "../websearch/loop.js";
-import { type DialectDeps, hopJson } from "./deps.js";
+import type { DialectAdapter } from "../websearch/loop.js";
+import type { DialectSpec } from "./run.js";
 
 const WEB_TOOL = {
   type: "function",
@@ -17,7 +17,7 @@ const wantsWebSearch = (body: any) =>
   (body.tools ?? []).some((t: any) => t.type === "web_search" || t.type === "web_search_preview") ||
   !!body.web_search_options;
 
-function makeAdapter(body: any, cfg: DialectDeps["cfg"]): DialectAdapter {
+function makeAdapter(body: any, cfg: AppConfig): DialectAdapter {
   const upstreamTools = [
     ...(body.tools ?? []).filter((t: any) => t.type !== "web_search" && t.type !== "web_search_preview"),
     WEB_TOOL,
@@ -60,32 +60,11 @@ function makeAdapter(body: any, cfg: DialectDeps["cfg"]): DialectAdapter {
   };
 }
 
-export async function handleOpenAIChat(
-  deps: DialectDeps,
-  body: any,
-  stream: boolean,
-  betas?: string,
-): Promise<GatewayResult> {
-  if (!wantsWebSearch(body)) {
-    const { response, accountId } = await deps.pool.execute({
-      kind: "chat",
-      pathname: "/v1/chat/completions",
-      body,
-      model: body.model,
-      betas,
-    });
-    if (stream && response.status === 200) return { type: "stream", response, accountId };
-    return { type: "json", status: response.status, json: await response.json().catch(() => null), accountId };
-  }
-  const out = await runWebSearchLoop({
-    adapter: makeAdapter(body, deps.cfg),
-    hop: (b) => hopJson(deps.pool, "chat", "/v1/chat/completions", b, betas),
-    search: deps.search,
-    maxUses: 4,
-  });
-  if (out.status !== 200)
-    return { type: "json", status: out.status, json: out.json, accountId: out.accountId, usage: out.usage };
-  return stream
-    ? { type: "sse", text: chatSSE(out.json), json: out.json, accountId: out.accountId, usage: out.usage }
-    : { type: "json", status: 200, json: out.json, accountId: out.accountId, usage: out.usage };
-}
+export const chatDialect: DialectSpec = {
+  kind: "chat",
+  pathname: "/v1/chat/completions",
+  wantsWebSearch,
+  maxUses: () => 4,
+  makeAdapter,
+  toSSE: chatSSE,
+};

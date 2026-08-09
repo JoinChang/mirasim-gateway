@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { loadConfig } from "../../src/config/index.js";
-import { handleOpenAIChat } from "../../src/dialects/openai-chat.js";
-import { handleOpenAIResponses } from "../../src/dialects/openai-responses.js";
+import { chatDialect } from "../../src/dialects/openai-chat.js";
+import { responsesDialect } from "../../src/dialects/openai-responses.js";
+import { runDialect } from "../../src/dialects/run.js";
 import { fakePool, R } from "../helpers/fakePool.js";
 
 const cfg = loadConfig({ fileJson: {}, env: {} });
@@ -36,7 +37,8 @@ describe("openai chat dialect", () => {
           }),
       ],
     }).pool;
-    const out = await handleOpenAIChat(
+    const out = await runDialect(
+      chatDialect,
       { pool, cfg, search } as any,
       { model: "gpt", messages: [{ role: "user", content: "hi" }], tools: [{ type: "web_search" }] },
       false,
@@ -46,7 +48,8 @@ describe("openai chat dialect", () => {
     expect((out as any).json.usage.web_search_requests).toBe(1);
   });
   it("passthrough stream returns response", async () => {
-    const out = await handleOpenAIChat(
+    const out = await runDialect(
+      chatDialect,
       { pool: fakePool({ script: [() => R({ ok: 1 })] }).pool, cfg, search } as any,
       { model: "gpt", messages: [] },
       true,
@@ -73,7 +76,8 @@ describe("openai responses dialect", () => {
           }),
       ],
     }).pool;
-    const out = await handleOpenAIResponses(
+    const out = await runDialect(
+      responsesDialect,
       { pool, cfg, search } as any,
       { model: "gpt", input: "hi", tools: [{ type: "web_search" }] },
       false,
@@ -92,7 +96,8 @@ describe("openai responses dialect", () => {
         () => R({ id: "r", model: "g", output: [{ type: "message", content: [{ type: "output_text", text: "a" }] }] }),
       ],
     }).pool;
-    const out = await handleOpenAIResponses(
+    const out = await runDialect(
+      responsesDialect,
       { pool, cfg, search } as any,
       { model: "g", input: "hi", tools: [{ type: "web_search" }] },
       true,

@@ -6,9 +6,10 @@ import type { KeysRepo } from "../db/repositories/keys.js";
 import type { ModelStatusRepo } from "../db/repositories/modelStatus.js";
 import type { UsageRepo } from "../db/repositories/usage.js";
 import type { DownstreamKey } from "../db/schema.js";
-import { handleMessages } from "../dialects/anthropic.js";
-import { handleOpenAIChat } from "../dialects/openai-chat.js";
-import { handleOpenAIResponses } from "../dialects/openai-responses.js";
+import { messagesDialect } from "../dialects/anthropic.js";
+import { chatDialect } from "../dialects/openai-chat.js";
+import { responsesDialect } from "../dialects/openai-responses.js";
+import { type DialectSpec, runDialect } from "../dialects/run.js";
 import type { Metrics } from "../metrics/registry.js";
 import type { GatewayResult, SearchRow } from "../types/wire.js";
 import { HOP_BY_HOP } from "../upstream/relay.js";
@@ -122,12 +123,10 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     });
   };
 
-  const route = (
-    path: string,
-    dialect: "messages" | "chat" | "responses",
-    handler: (d: AppDeps, body: any, stream: boolean, betas?: string) => Promise<GatewayResult>,
-  ) =>
-    app.post(path, async (c) => {
+  // The spec carries its own kind and pathname, so the route table no longer
+  // repeats either of them.
+  const route = (spec: DialectSpec) =>
+    app.post(spec.pathname, async (c) => {
       const body = await c.req.json().catch(() => null);
       if (!body) return c.json({ error: { type: "invalid_request", message: "invalid JSON body" } }, 400);
       applyModelAlias(body, cfg);
@@ -146,13 +145,13 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
           400,
         );
       const started = Date.now();
-      const result = await handler(deps, body, !!body.stream, c.req.header("anthropic-beta"));
-      return finish(c, result, dialect, body.model ?? "", started);
+      const result = await runDialect(spec, deps, body, !!body.stream, c.req.header("anthropic-beta"));
+      return finish(c, result, spec.kind, body.model ?? "", started);
     });
 
-  route("/v1/messages", "messages", handleMessages);
-  route("/v1/chat/completions", "chat", handleOpenAIChat);
-  route("/v1/responses", "responses", handleOpenAIResponses);
+  route(messagesDialect);
+  route(chatDialect);
+  route(responsesDialect);
 
   app.get("/v1/models", async (c) => {
     const { response } = await deps.pool.execute({ kind: "chat", pathname: "/v1/models", method: "GET" });
