@@ -41,6 +41,18 @@ export const usageEvents = sqliteTable("usage_events", {
   latencyMs: integer("latency_ms").notNull().default(0),
 });
 
+export const modelStatus = sqliteTable("model_status", {
+  model: text("model").primaryKey(),
+  /** "ok" | "unavailable" | "unknown" */
+  state: text("state").notNull().default("unknown"),
+  lastStatus: integer("last_status").notNull().default(0),
+  lastCheckedAt: integer("last_checked_at").notNull().default(0),
+  lastOkAt: integer("last_ok_at").notNull().default(0),
+  /** Set when LiteLLM served a different model than the one requested. */
+  servedModel: text("served_model"),
+  consecutiveFails: integer("consecutive_fails").notNull().default(0),
+});
+
 export const kv = sqliteTable("kv", {
   key: text("key").primaryKey(),
   value: text("value").notNull(),

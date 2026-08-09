@@ -3,6 +3,7 @@ import type { Pool } from "../accounts/pool.js";
 import type { AccountStore } from "../accounts/store.js";
 import type { AppConfig } from "../config/index.js";
 import type { KeysRepo } from "../db/repositories/keys.js";
+import type { ModelStatusRepo } from "../db/repositories/modelStatus.js";
 import type { UsageRepo } from "../db/repositories/usage.js";
 import type { DownstreamKey } from "../db/schema.js";
 import { handleMessages } from "../dialects/anthropic.js";
@@ -25,6 +26,7 @@ export interface AppDeps {
   metrics: Metrics;
   recorder: Recorder;
   search: (query: string) => Promise<SearchRow[]>;
+  modelStatus: ModelStatusRepo;
 }
 
 export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
@@ -118,6 +120,20 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
       const body = await c.req.json().catch(() => null);
       if (!body) return c.json({ error: { type: "invalid_request", message: "invalid JSON body" } }, 400);
       applyModelAlias(body, cfg);
+      // Checked against the resolved model: an alias pointing at a dead model is
+      // just as unusable as naming it directly. Models we have no verdict on pass
+      // through — the request itself is how we find out.
+      const known = body.model ? deps.modelStatus.get(body.model) : undefined;
+      if (known?.state === "unavailable")
+        return c.json(
+          {
+            error: {
+              type: "model_unavailable",
+              message: `model ${body.model} is not currently served by the relay (last upstream status ${known.lastStatus})`,
+            },
+          },
+          400,
+        );
       const started = Date.now();
       const result = await handler(deps, body, !!body.stream);
       return finish(c, result, dialect, body.model ?? "", started);
@@ -129,7 +145,13 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
 
   app.get("/v1/models", async (c) => {
     const { response } = await deps.pool.execute("chat", (call) => call("/v1/models", undefined, "GET"));
-    return c.json(await response.json().catch(() => ({})), response.status as any);
+    const body: any = await response.json().catch(() => ({}));
+    if (Array.isArray(body?.data)) {
+      // The catalog is also how we discover models worth probing later.
+      deps.modelStatus.seed(body.data.map((m: any) => m?.id).filter((id: unknown): id is string => !!id));
+      body.data = body.data.filter((m: any) => deps.modelStatus.get(m?.id)?.state !== "unavailable");
+    }
+    return c.json(body, response.status as any);
   });
 
   app.get("/health", (c) => {

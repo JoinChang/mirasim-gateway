@@ -5,6 +5,7 @@ import { loadConfig } from "../../src/config/index.js";
 import { memDb } from "../../src/db/client.js";
 import { accountsRepo } from "../../src/db/repositories/accounts.js";
 import { keysRepo } from "../../src/db/repositories/keys.js";
+import { modelStatusRepo } from "../../src/db/repositories/modelStatus.js";
 import { usageRepo } from "../../src/db/repositories/usage.js";
 import { createApp } from "../../src/gateway/app.js";
 import { sha256Hex } from "../../src/gateway/util.js";
@@ -44,7 +45,8 @@ function build(opts: {
     deviceIdentityFor: () => ({}) as any,
   };
   const search = async (q: string) => [{ url: `http://res/${q}`, title: "T", description: "D" }];
-  return { app: createApp({ pool, store, cfg, keys, usage, metrics, recorder, search }), metrics };
+  const modelStatus = modelStatusRepo(db);
+  return { app: createApp({ pool, store, cfg, keys, usage, metrics, recorder, search, modelStatus }), metrics };
 }
 
 const post = (app: any, path: string, body: unknown, headers: Record<string, string> = {}) =>

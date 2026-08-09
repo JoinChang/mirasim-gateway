@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config/index.js";
 import { type DeviceIdentity, generateIdentity, identityFromPem } from "../crypto/device.js";
+import { classifyOutcome, type Outcome, utilizationFrom } from "../models/classify.js";
 import { callUpstream } from "../upstream/client.js";
 import type { Kind } from "../upstream/relay.js";
 import type { Semaphore } from "../upstream/sem.js";
@@ -48,22 +49,21 @@ export function cooldownMsFrom(
   return Math.min(capMs, 8000 * 2 ** (n - 1));
 }
 
-function utilizationFrom(getHeader: (k: string) => string | null | undefined): number | null {
-  let u: number | null = null;
-  for (const h of ["anthropic-ratelimit-unified-5h-utilization", "anthropic-ratelimit-unified-7d-utilization"]) {
-    const v = getHeader(h);
-    if (v != null) {
-      const n = Number.parseFloat(v);
-      if (Number.isFinite(n)) u = Math.max(u ?? 0, n);
-    }
-  }
-  return u;
+export interface ExecuteOptions {
+  /**
+   * Run on exactly this account and no other. Pooling normally balances by
+   * utilization, which starves the busiest accounts — fine for serving traffic,
+   * wrong when the caller's purpose is to reach a specific account.
+   */
+  onlyAccount?: string;
 }
 
 export interface Pool {
   execute(
     kind: Kind,
     buildAndCall: (call: (pathname: string, body: unknown, method?: string) => Promise<Response>) => Promise<Response>,
+    model?: string,
+    options?: ExecuteOptions,
   ): Promise<{ response: Response; accountId: string }>;
   deviceIdentityFor(a: DecryptedAccount): DeviceIdentity;
 }
@@ -75,6 +75,7 @@ export function createPool(opts: {
   config: AppConfig;
   sem: Semaphore;
   fetchFn: typeof fetch;
+  onOutcome?: (model: string, outcome: Outcome) => void;
 }): Pool {
   const idCache = new Map<string, DeviceIdentity>();
   const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -108,12 +109,16 @@ export function createPool(opts: {
   async function execute(
     kind: Kind,
     buildAndCall: (call: (pathname: string, body: unknown, method?: string) => Promise<Response>) => Promise<Response>,
+    model?: string,
+    options?: ExecuteOptions,
   ): Promise<{ response: Response; accountId: string }> {
     const cfg = opts.config;
     const deadline = Date.now() + cfg.maxWaitMs;
+    const candidates = () =>
+      options?.onlyAccount ? opts.store.list().filter((a) => a.id === options.onlyAccount) : opts.store.list();
     let fiveXX = 0;
     for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
-      const sel = selectAccount(opts.store.list(), Date.now());
+      const sel = selectAccount(candidates(), Date.now());
       if (!sel) break;
       if (sel.waitMs > 0) {
         if (Date.now() + sel.waitMs > deadline) break;
@@ -159,7 +164,19 @@ export function createPool(opts: {
       const util = utilizationFrom(gh);
       if (util != null) opts.store.setUtilization(a.id, util);
 
-      if (resp.status === 429) {
+      const outcome = classifyOutcome(resp.status, gh);
+      if (model) opts.onOutcome?.(model, outcome);
+
+      // A model the relay has no deployment for is not an account problem. Cooling
+      // the pool for it would take every account offline over a model that will
+      // never work, and walking the remaining accounts only repeats the rejection —
+      // so hand the caller the relay's own error instead of burning the pool.
+      if (outcome.kind === "model_unavailable" && resp.status === 429) {
+        opts.store.setFails(a.id, 0);
+        return { response: resp, accountId: a.id };
+      }
+
+      if (outcome.kind === "account_throttled") {
         resp.body?.cancel?.().catch(() => {});
         opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
         opts.store.setFails(a.id, a.consecutiveFails + 1);

@@ -28,6 +28,10 @@ const ConfigSchema = z.object({
   blockDomains: z.array(z.string()).default([]),
   modelAliases: z.record(z.string(), z.string()).default({}),
   defaultModel: z.string().default(""),
+  modelProbeEnabled: z.boolean().default(true),
+  modelProbeIntervalMs: z.number().int().positive().default(900_000),
+  modelProbeTtlMs: z.number().int().positive().default(21_600_000),
+  modelProbeMaxPerCycle: z.number().int().positive().default(8),
 });
 
 export interface AppConfig extends z.infer<typeof ConfigSchema> {
@@ -62,6 +66,10 @@ export function loadConfig(input: { fileJson: Record<string, unknown>; env: Node
     ...(listFromEnv(env.PREFER_DOMAINS) ? { preferDomains: listFromEnv(env.PREFER_DOMAINS) } : {}),
     ...(listFromEnv(env.BLOCK_DOMAINS) ? { blockDomains: listFromEnv(env.BLOCK_DOMAINS) } : {}),
     ...(env.DEFAULT_MODEL ? { defaultModel: env.DEFAULT_MODEL } : {}),
+    ...(env.MODEL_PROBE_ENABLED != null ? { modelProbeEnabled: boolFrom(env.MODEL_PROBE_ENABLED, true) } : {}),
+    ...(env.MODEL_PROBE_INTERVAL_MS ? { modelProbeIntervalMs: Number(env.MODEL_PROBE_INTERVAL_MS) } : {}),
+    ...(env.MODEL_PROBE_TTL_MS ? { modelProbeTtlMs: Number(env.MODEL_PROBE_TTL_MS) } : {}),
+    ...(env.MODEL_PROBE_MAX_PER_CYCLE ? { modelProbeMaxPerCycle: Number(env.MODEL_PROBE_MAX_PER_CYCLE) } : {}),
   };
   const validated = ConfigSchema.parse(merged);
 

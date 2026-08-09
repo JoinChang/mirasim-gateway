@@ -85,7 +85,11 @@ function makeAdapter(
 export async function handleMessages(deps: DialectDeps, body: any, stream: boolean): Promise<GatewayResult> {
   const wantsWs = (body.tools ?? []).some((t: any) => t.type === SERVER_WS);
   if (!wantsWs) {
-    const { response, accountId } = await deps.pool.execute("messages", (call) => call("/v1/messages", body));
+    const { response, accountId } = await deps.pool.execute(
+      "messages",
+      (call) => call("/v1/messages", body),
+      body.model,
+    );
     if (stream && response.status === 200) return { type: "stream", response, accountId };
     return { type: "json", status: response.status, json: await response.json().catch(() => null), accountId };
   }

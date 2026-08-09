@@ -7,9 +7,12 @@ import type { AppConfig } from "./config/index.js";
 import { type DB, openDb, migrate as runMigrate } from "./db/client.js";
 import { accountsRepo } from "./db/repositories/accounts.js";
 import { keysRepo } from "./db/repositories/keys.js";
+import { modelStatusRepo } from "./db/repositories/modelStatus.js";
 import { usageRepo } from "./db/repositories/usage.js";
 import { createApp } from "./gateway/app.js";
 import { createMetrics } from "./metrics/registry.js";
+import { createProber } from "./models/prober.js";
+import { recordOutcome } from "./models/record.js";
 import { makeSemaphore } from "./upstream/sem.js";
 import { createRecorder } from "./usage/recorder.js";
 import { makeSearch } from "./websearch/search.js";
@@ -26,8 +29,18 @@ export function buildRuntime(cfg: AppConfig, dbPath?: string) {
   const refresher = createRefresher({ store, loginBase: cfg.loginBase, fetchFn: fetch });
   const ticketManager = createTicketManager({ relayBase: cfg.relayBase, fetchFn: fetch, appVersion: cfg.appVersion });
   const sem = makeSemaphore(cfg.maxConcurrency);
-  const pool = createPool({ store, refresher, ticketManager, config: cfg, sem, fetchFn: fetch });
+  const modelStatus = modelStatusRepo(db);
+  const pool = createPool({
+    store,
+    refresher,
+    ticketManager,
+    config: cfg,
+    sem,
+    fetchFn: fetch,
+    onOutcome: (model, outcome) => recordOutcome(modelStatus, model, outcome, Date.now()),
+  });
   const search = makeSearch(cfg, process.env, fetch);
-  const app = createApp({ pool, store, cfg, keys, usage, metrics, recorder, search });
-  return { db, store, keys, usage, metrics, pool, app };
+  const app = createApp({ pool, store, cfg, keys, usage, metrics, recorder, search, modelStatus });
+  const prober = createProber({ pool, repo: modelStatus, cfg, log: (m) => process.stderr.write(`${m}\n`) });
+  return { db, store, keys, usage, metrics, pool, app, modelStatus, prober };
 }
