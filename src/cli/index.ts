@@ -167,6 +167,9 @@ function cmdDeviceShow(cfg: AppConfig) {
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
+  try {
+    process.loadEnvFile(".env");
+  } catch {}
   const { _, flags } = parseArgs(argv);
   const cmd = _[0];
   const cfg = loadConfigFromDisk();

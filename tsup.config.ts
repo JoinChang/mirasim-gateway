@@ -7,5 +7,5 @@ export default defineConfig({
   clean: true,
   banner: { js: '#!/usr/bin/env node' },
   external: ['better-sqlite3'],
-  onSuccess: 'cp -r src/db/migrations dist/migrations',
+  onSuccess: 'rm -rf dist/migrations && cp -R src/db/migrations dist/migrations && echo "[tsup] copied migrations"',
 });
