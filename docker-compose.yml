@@ -19,5 +19,9 @@ services:
     volumes:
       - ./data:/data
       - ./config.json:/app/config.json:ro
+      # Source material for `accounts exercise`, which reviews this repo's own
+      # code. Read-only, and only ever read — without it the keep-alive round
+      # has nothing to work on inside the container.
+      - ./src:/app/src:ro
     # Linux: if ./data writes fail, set to your host uid:gid
     # user: "1000:1000"

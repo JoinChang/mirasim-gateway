@@ -70,7 +70,16 @@ Cost is dominated by model choice, not prompt size. Two same-round requests of
 ~2.7k and ~3.1k tokens moved the 7d window by 0.017pp on `claude-haiku-4-5` versus
 0.42pp on `claude-opus-4-8` — a 25× spread. Use `--models claude-haiku-4-5` for
 keep-alive: a full 5-account round then costs about 0.02pp each.
-`deploy/keepalive.plist` schedules it twice daily via launchd.
+
+`deploy/keepalive.plist` schedules it twice daily via launchd, running
+`docker compose exec` rather than the host CLI. That matters: `./data` is a bind
+mount, so a host process and the container writing the same SQLite WAL across a
+virtualised filesystem is how databases get corrupted. **The container is the
+sole writer — always reach the CLI through it:**
+```sh
+docker compose exec -T gateway node dist/index.js models status
+docker compose exec -T gateway node dist/index.js accounts list
+```
 
 ## Config (`config.json`, env overrides in CAPS)
 search provider/limit, allow/prefer/block domains, model aliases, deviceSigning,
