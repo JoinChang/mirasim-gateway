@@ -39,7 +39,9 @@ export function buildRuntime(cfg: AppConfig, dbPath?: string) {
     fetchFn: fetch,
     onOutcome: (model, outcome) => recordOutcome(modelStatus, model, outcome, Date.now()),
   });
-  const search = makeSearch(cfg, process.env, fetch);
+  const search = makeSearch(cfg, process.env, fetch, {
+    onAllowFallback: () => metrics.searchAllowFallback.inc(),
+  });
   const app = createApp({ pool, store, cfg, keys, usage, metrics, recorder, search, modelStatus });
   const prober = createProber({ pool, repo: modelStatus, cfg, log: (m) => process.stderr.write(`${m}\n`) });
   return { db, store, keys, usage, metrics, pool, app, modelStatus, prober };

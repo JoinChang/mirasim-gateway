@@ -7,6 +7,9 @@ export function createMetrics() {
   const requests = mk("mira_requests_total", "downstream requests", ["dialect", "status"]);
   const upstreamCalls = mk("mira_upstream_calls_total", "relay calls");
   const searches = mk("mira_searches_total", "web searches");
+  // How often allowDomains was configured but gave up. A high ratio against
+  // mira_searches_total means the allowlist is mostly decorative.
+  const searchAllowFallback = mk("mira_search_allow_fallback_total", "searches where allowDomains was discarded");
   const tokens = mk("mira_tokens_total", "tokens", ["dir"]);
   const http429 = mk("mira_http_429_total", "429 responses");
   const errors = mk("mira_errors_total", "errors");
@@ -17,6 +20,7 @@ export function createMetrics() {
     requests,
     upstreamCalls,
     searches,
+    searchAllowFallback,
     tokens,
     http429,
     errors,
