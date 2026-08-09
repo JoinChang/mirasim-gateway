@@ -32,7 +32,11 @@ function setup(relayScript: Array<() => Response>) {
 describe("pool.execute failover", () => {
   it("returns 200 directly", async () => {
     const { pool } = setup([() => jsonResponse({ ok: 1 })]);
-    const { response, accountId } = await pool.execute("messages", (call) => call("/v1/messages", { model: "m" }));
+    const { response, accountId } = await pool.execute({
+      kind: "messages",
+      pathname: "/v1/messages",
+      body: { model: "m" },
+    });
     expect(response.status).toBe(200);
     expect(accountId).toBeTruthy();
   });
@@ -42,7 +46,7 @@ describe("pool.execute failover", () => {
       () => jsonResponse({ error: "rl" }, 429, { "retry-after": "1" }),
       () => jsonResponse({ ok: 2 }, 200),
     ]);
-    const { response } = await pool.execute("messages", (call) => call("/v1/messages", { model: "m" }));
+    const { response } = await pool.execute({ kind: "messages", pathname: "/v1/messages", body: { model: "m" } });
     expect(response.status).toBe(200);
     // one account got cooled
     const cooled = store.list().filter((a) => a.disabledUntil > Date.now());
@@ -55,7 +59,7 @@ describe("pool.execute failover", () => {
       () => jsonResponse({ e: 2 }, 502),
       () => jsonResponse({ ok: 3 }, 200),
     ]);
-    const { response } = await pool.execute("chat", (call) => call("/v1/chat/completions", { model: "m" }));
+    const { response } = await pool.execute({ kind: "chat", pathname: "/v1/chat/completions", body: { model: "m" } });
     expect(response.status).toBe(200);
     // no account should be in cooldown (5xx does not cool)
     expect(store.list().every((a) => a.disabledUntil <= Date.now())).toBe(true);
@@ -64,9 +68,13 @@ describe("pool.execute failover", () => {
   it("all accounts throttled → 429 all_accounts_throttled", async () => {
     const script = Array.from({ length: 20 }, () => () => jsonResponse({ e: "rl" }, 429, { "retry-after": "1" }));
     const { pool } = setup(script);
-    const { response, accountId } = await pool.execute("messages", (call) => call("/v1/messages", { model: "m" }));
+    const { response, accountId } = await pool.execute({
+      kind: "messages",
+      pathname: "/v1/messages",
+      body: { model: "m" },
+    });
     expect(response.status).toBe(429);
     expect(accountId).toBe("");
-    expect((await response.json()).error.type).toBe("all_accounts_throttled");
+    expect(((await response.json()) as any).error.type).toBe("all_accounts_throttled");
   });
 });

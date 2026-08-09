@@ -1,4 +1,8 @@
 {
+  // tsc is only ever run with --noEmit (tsup does the build, tsx runs dev), so
+  // there is no rootDir/outDir to satisfy — which is what lets `tests` sit in
+  // `include`. Leaving it out meant the test suite was never typechecked, and a
+  // stale Pool fake survived an interface change because the tests still passed.
   "compilerOptions": {
     "target": "ES2023",
     "module": "NodeNext",
@@ -10,10 +14,9 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "outDir": "dist",
-    "rootDir": "src",
+    "noEmit": true,
     "declaration": false,
     "verbatimModuleSyntax": false
   },
-  "include": ["src"]
+  "include": ["src", "tests"]
 }

@@ -1,3 +1,4 @@
+import { desc } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Pool } from "../../src/accounts/pool.js";
 import { accountStore } from "../../src/accounts/store.js";
@@ -7,6 +8,7 @@ import { accountsRepo } from "../../src/db/repositories/accounts.js";
 import { keysRepo } from "../../src/db/repositories/keys.js";
 import { modelStatusRepo } from "../../src/db/repositories/modelStatus.js";
 import { usageRepo } from "../../src/db/repositories/usage.js";
+import { usageEvents } from "../../src/db/schema.js";
 import { createApp } from "../../src/gateway/app.js";
 import { sha256Hex } from "../../src/gateway/util.js";
 import { createMetrics } from "../../src/metrics/registry.js";
@@ -42,6 +44,10 @@ function build(opts: {
   };
 }
 
+/** Newest usage row, read through drizzle rather than reaching for the raw client. */
+const latestUsage = (db: ReturnType<typeof memDb>) =>
+  db.select().from(usageEvents).orderBy(desc(usageEvents.ts)).limit(1).all()[0]!;
+
 const post = (app: any, path: string, body: unknown, headers: Record<string, string> = {}) =>
   app.request(path, {
     method: "POST",
@@ -73,7 +79,7 @@ describe("gateway app", () => {
 
   it("/health reports accounts", async () => {
     const { app } = build({});
-    const j = await (await app.request("/health")).json();
+    const j = (await (await app.request("/health")).json()) as any;
     expect(j.ok).toBe(true);
     expect(j.accounts).toBe(1);
     expect(j.enabled).toBe(1);
@@ -106,11 +112,9 @@ describe("gateway app", () => {
     const res = await post(app, "/v1/messages", { model: "c", stream: true, messages: [] });
     await res.text();
     await new Promise((r) => setTimeout(r, 10));
-    const row: any = db.$client
-      .prepare("select input_tokens, output_tokens from usage_events order by ts desc limit 1")
-      .get();
-    expect(row.input_tokens).toBe(11);
-    expect(row.output_tokens).toBe(5);
+    const row = latestUsage(db);
+    expect(row.inputTokens).toBe(11);
+    expect(row.outputTokens).toBe(5);
   });
 
   it("passes the client's anthropic-beta down to the upstream call", async () => {
@@ -143,11 +147,9 @@ describe("gateway app", () => {
       tools: [{ type: "web_search_20250305", name: "web_search" }],
     });
     expect(res.status).toBe(200);
-    const row: any = db.$client
-      .prepare("select account_id, input_tokens, output_tokens from usage_events order by ts desc limit 1")
-      .get();
-    expect(row.account_id).toBe("a1");
-    expect(row.input_tokens).toBe(300);
-    expect(row.output_tokens).toBe(30);
+    const row = latestUsage(db);
+    expect(row.accountId).toBe("a1");
+    expect(row.inputTokens).toBe(300);
+    expect(row.outputTokens).toBe(30);
   });
 });

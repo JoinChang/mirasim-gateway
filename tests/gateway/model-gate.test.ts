@@ -71,13 +71,13 @@ describe("/v1/models", () => {
   it("hides models known to be unusable", async () => {
     const { app, modelStatus } = build({ script: [catalog] });
     modelStatus.markUnavailable("gpt-5.6-sol", Date.now(), 429);
-    const ids = (await (await app.request("/v1/models")).json()).data.map((m: any) => m.id);
+    const ids = ((await (await app.request("/v1/models")).json()) as any).data.map((m: any) => m.id);
     expect(ids).toEqual(["claude-opus-5", "never-seen"]);
   });
 
   it("keeps models it has no verdict on", async () => {
     const { app } = build({ script: [catalog] });
-    const ids = (await (await app.request("/v1/models")).json()).data.map((m: any) => m.id);
+    const ids = ((await (await app.request("/v1/models")).json()) as any).data.map((m: any) => m.id);
     expect(ids).toContain("never-seen");
   });
 });
