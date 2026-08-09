@@ -90,12 +90,13 @@ export async function handleMessages(
 ): Promise<GatewayResult> {
   const wantsWs = (body.tools ?? []).some((t: any) => t.type === SERVER_WS);
   if (!wantsWs) {
-    const { response, accountId } = await deps.pool.execute(
-      "messages",
-      (call) => call("/v1/messages", body),
-      body.model,
-      { betas },
-    );
+    const { response, accountId } = await deps.pool.execute({
+      kind: "messages",
+      pathname: "/v1/messages",
+      body,
+      model: body.model,
+      betas,
+    });
     if (stream && response.status === 200) return { type: "stream", response, accountId };
     return { type: "json", status: response.status, json: await response.json().catch(() => null), accountId };
   }

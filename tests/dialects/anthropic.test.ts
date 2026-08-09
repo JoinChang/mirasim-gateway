@@ -5,7 +5,7 @@ import { fakePool, R } from "../helpers/fakePool.js";
 
 const cfg = loadConfig({ fileJson: {}, env: {} });
 const deps = (script: Array<() => Response>) => ({
-  pool: fakePool(script),
+  pool: fakePool({ script }).pool,
   cfg,
   search: async (q: string) => [{ url: `http://res/${q}`, title: "T", description: "D" }],
 });

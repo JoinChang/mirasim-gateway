@@ -28,11 +28,12 @@ export function createProber(opts: {
     // max_tokens has to be big enough to look like a real request: the relay
     // rejects max_tokens:1 with 400 invalid_request_error, which reveals nothing
     // about the model and would leave it unprobeable forever.
-    const { response } = await opts.pool.execute(
-      "messages",
-      (call) => call("/v1/messages", { model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+    const { response } = await opts.pool.execute({
+      kind: "messages",
+      pathname: "/v1/messages",
+      body: { model, max_tokens: 16, messages: [{ role: "user", content: "hi" }] },
       model,
-    );
+    });
     await response.text().catch(() => "");
   }
 

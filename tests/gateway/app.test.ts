@@ -11,13 +11,12 @@ import { createApp } from "../../src/gateway/app.js";
 import { sha256Hex } from "../../src/gateway/util.js";
 import { createMetrics } from "../../src/metrics/registry.js";
 import { createRecorder } from "../../src/usage/recorder.js";
-import { R } from "../helpers/fakePool.js";
+import { fakePool, R } from "../helpers/fakePool.js";
 
 function build(opts: {
   script?: Array<() => Response>;
   keys?: Array<{ id: string; plain: string; rpm?: number }>;
   aliases?: Record<string, string>;
-  bodies?: any[];
 }) {
   const db = memDb();
   const store = accountStore({ db, masterKey: null });
@@ -32,27 +31,14 @@ function build(opts: {
   const script = opts.script ?? [
     () => R({ content: [{ type: "text", text: "hi" }], usage: { input_tokens: 3, output_tokens: 2 } }),
   ];
-  const bodies = opts.bodies;
-  const execOptions: any[] = [];
-  const pool: Pool = {
-    execute: async (_k, buildAndCall, _model, options) => {
-      execOptions.push(options);
-      const call = async (_p: string, b: unknown) => {
-        if (bodies) bodies.push(b);
-        const n = script.shift();
-        return n ? n() : R({ ok: 1 });
-      };
-      return { response: await buildAndCall(call), accountId: "a1" };
-    },
-    deviceIdentityFor: () => ({}) as any,
-  };
+  const { pool, requests } = fakePool({ script, accountId: "a1" });
   const search = async (q: string) => [{ url: `http://res/${q}`, title: "T", description: "D" }];
   const modelStatus = modelStatusRepo(db);
   return {
     app: createApp({ pool, store, cfg, keys, usage, metrics, recorder, search, modelStatus }),
     metrics,
     db,
-    execOptions,
+    requests,
   };
 }
 
@@ -80,10 +66,9 @@ describe("gateway app", () => {
   });
 
   it("applies model alias before upstream", async () => {
-    const bodies: any[] = [];
-    const { app } = build({ aliases: { haiku: "claude-haiku-4-5" }, bodies });
+    const { app, requests } = build({ aliases: { haiku: "claude-haiku-4-5" } });
     await post(app, "/v1/messages", { model: "haiku", messages: [] });
-    expect(bodies[0].model).toBe("claude-haiku-4-5");
+    expect((requests[0]!.body as any).model).toBe("claude-haiku-4-5");
   });
 
   it("/health reports accounts", async () => {
@@ -129,14 +114,14 @@ describe("gateway app", () => {
   });
 
   it("passes the client's anthropic-beta down to the upstream call", async () => {
-    const { app, execOptions } = build({});
+    const { app, requests } = build({});
     await post(
       app,
       "/v1/messages",
       { model: "c", messages: [] },
       { "anthropic-beta": "context-1m-2025-08-07,claude-code-20250219" },
     );
-    expect(execOptions[0]?.betas).toBe("context-1m-2025-08-07,claude-code-20250219");
+    expect(requests[0]?.betas).toBe("context-1m-2025-08-07,claude-code-20250219");
   });
 
   it("attributes a web_search request to an account and counts every hop", async () => {

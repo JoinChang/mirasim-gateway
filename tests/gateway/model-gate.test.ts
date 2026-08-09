@@ -10,7 +10,7 @@ import { usageRepo } from "../../src/db/repositories/usage.js";
 import { createApp } from "../../src/gateway/app.js";
 import { createMetrics } from "../../src/metrics/registry.js";
 import { createRecorder } from "../../src/usage/recorder.js";
-import { R } from "../helpers/fakePool.js";
+import { fakePool, R } from "../helpers/fakePool.js";
 
 function build(opts: { aliases?: Record<string, string>; script?: Array<() => Response> } = {}) {
   const db = memDb();
@@ -22,22 +22,11 @@ function build(opts: { aliases?: Record<string, string>; script?: Array<() => Re
   const recorder = createRecorder({ usage, keys, accounts: accountsRepo(db), metrics });
   const cfg = loadConfig({ fileJson: { deviceSigning: false, modelAliases: opts.aliases ?? {} }, env: {} });
   const modelStatus = modelStatusRepo(db);
-  const script = opts.script ?? [];
-  let poolCalls = 0;
-  const pool: Pool = {
-    execute: async (_k, buildAndCall) => {
-      poolCalls++;
-      const call = async () => {
-        const n = script.shift();
-        return n ? n() : R({ content: [{ type: "text", text: "hi" }] });
-      };
-      return { response: await buildAndCall(call), accountId: "a1" };
-    },
-    deviceIdentityFor: () => ({}) as any,
-  };
+  const script = opts.script ?? [() => R({ content: [{ type: "text", text: "hi" }] })];
+  const { pool, requests } = fakePool({ script, accountId: "a1" });
   const search = async () => [];
   const app = createApp({ pool, store, cfg, keys, usage, metrics, recorder, search, modelStatus });
-  return { app, modelStatus, poolCalls: () => poolCalls };
+  return { app, modelStatus, poolCalls: () => requests.length };
 }
 
 const post = (app: any, body: unknown) =>

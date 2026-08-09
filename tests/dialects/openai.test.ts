@@ -9,31 +9,33 @@ const search = async (q: string) => [{ url: `http://res/${q}`, title: "T", descr
 
 describe("openai chat dialect", () => {
   it("web_search: annotations + usage", async () => {
-    const pool = fakePool([
-      () =>
-        R({
-          id: "c1",
-          model: "gpt",
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: "assistant",
-                tool_calls: [
-                  { id: "tc1", type: "function", function: { name: "web_search", arguments: '{"query":"q"}' } },
-                ],
+    const pool = fakePool({
+      script: [
+        () =>
+          R({
+            id: "c1",
+            model: "gpt",
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: "assistant",
+                  tool_calls: [
+                    { id: "tc1", type: "function", function: { name: "web_search", arguments: '{"query":"q"}' } },
+                  ],
+                },
+                finish_reason: "tool_calls",
               },
-              finish_reason: "tool_calls",
-            },
-          ],
-        }),
-      () =>
-        R({
-          id: "c2",
-          model: "gpt",
-          choices: [{ index: 0, message: { role: "assistant", content: "answer" }, finish_reason: "stop" }],
-        }),
-    ]);
+            ],
+          }),
+        () =>
+          R({
+            id: "c2",
+            model: "gpt",
+            choices: [{ index: 0, message: { role: "assistant", content: "answer" }, finish_reason: "stop" }],
+          }),
+      ],
+    }).pool;
     const out = await handleOpenAIChat(
       { pool, cfg, search } as any,
       { model: "gpt", messages: [{ role: "user", content: "hi" }], tools: [{ type: "web_search" }] },
@@ -45,7 +47,7 @@ describe("openai chat dialect", () => {
   });
   it("passthrough stream returns response", async () => {
     const out = await handleOpenAIChat(
-      { pool: fakePool([() => R({ ok: 1 })]), cfg, search } as any,
+      { pool: fakePool({ script: [() => R({ ok: 1 })] }).pool, cfg, search } as any,
       { model: "gpt", messages: [] },
       true,
     );
@@ -55,20 +57,22 @@ describe("openai chat dialect", () => {
 
 describe("openai responses dialect", () => {
   it("web_search: web_search_call item + annotations", async () => {
-    const pool = fakePool([
-      () =>
-        R({
-          id: "r1",
-          model: "gpt",
-          output: [{ type: "function_call", call_id: "fc1", name: "web_search", arguments: '{"query":"q"}' }],
-        }),
-      () =>
-        R({
-          id: "r2",
-          model: "gpt",
-          output: [{ type: "message", content: [{ type: "output_text", text: "answer" }] }],
-        }),
-    ]);
+    const pool = fakePool({
+      script: [
+        () =>
+          R({
+            id: "r1",
+            model: "gpt",
+            output: [{ type: "function_call", call_id: "fc1", name: "web_search", arguments: '{"query":"q"}' }],
+          }),
+        () =>
+          R({
+            id: "r2",
+            model: "gpt",
+            output: [{ type: "message", content: [{ type: "output_text", text: "answer" }] }],
+          }),
+      ],
+    }).pool;
     const out = await handleOpenAIResponses(
       { pool, cfg, search } as any,
       { model: "gpt", input: "hi", tools: [{ type: "web_search" }] },
@@ -83,9 +87,11 @@ describe("openai responses dialect", () => {
     expect((out as any).json.usage.web_search_requests).toBe(1);
   });
   it("web_search + stream → responses SSE", async () => {
-    const pool = fakePool([
-      () => R({ id: "r", model: "g", output: [{ type: "message", content: [{ type: "output_text", text: "a" }] }] }),
-    ]);
+    const pool = fakePool({
+      script: [
+        () => R({ id: "r", model: "g", output: [{ type: "message", content: [{ type: "output_text", text: "a" }] }] }),
+      ],
+    }).pool;
     const out = await handleOpenAIResponses(
       { pool, cfg, search } as any,
       { model: "g", input: "hi", tools: [{ type: "web_search" }] },

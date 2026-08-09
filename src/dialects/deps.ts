@@ -16,9 +16,7 @@ export async function hopJson(
   body: unknown,
   betas?: string,
 ): Promise<{ status: number; json: any; accountId: string }> {
-  const { response, accountId } = await pool.execute(kind, (call) => call(pathname, body), (body as any)?.model, {
-    betas,
-  });
+  const { response, accountId } = await pool.execute({ kind, pathname, body, model: (body as any)?.model, betas });
   const json = await response.json().catch(() => null);
   return { status: response.status, json, accountId };
 }

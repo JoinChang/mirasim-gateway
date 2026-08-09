@@ -78,12 +78,13 @@ export async function handleOpenAIResponses(
   betas?: string,
 ): Promise<GatewayResult> {
   if (!wantsWebSearch(body)) {
-    const { response, accountId } = await deps.pool.execute(
-      "responses",
-      (call) => call("/v1/responses", body),
-      body.model,
-      { betas },
-    );
+    const { response, accountId } = await deps.pool.execute({
+      kind: "responses",
+      pathname: "/v1/responses",
+      body,
+      model: body.model,
+      betas,
+    });
     if (stream && response.status === 200) return { type: "stream", response, accountId };
     return { type: "json", status: response.status, json: await response.json().catch(() => null), accountId };
   }

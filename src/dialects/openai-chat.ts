@@ -67,12 +67,13 @@ export async function handleOpenAIChat(
   betas?: string,
 ): Promise<GatewayResult> {
   if (!wantsWebSearch(body)) {
-    const { response, accountId } = await deps.pool.execute(
-      "chat",
-      (call) => call("/v1/chat/completions", body),
-      body.model,
-      { betas },
-    );
+    const { response, accountId } = await deps.pool.execute({
+      kind: "chat",
+      pathname: "/v1/chat/completions",
+      body,
+      model: body.model,
+      betas,
+    });
     if (stream && response.status === 200) return { type: "stream", response, accountId };
     return { type: "json", status: response.status, json: await response.json().catch(() => null), accountId };
   }

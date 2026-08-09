@@ -49,24 +49,30 @@ export function cooldownMsFrom(
   return Math.min(capMs, 8000 * 2 ** (n - 1));
 }
 
-export interface ExecuteOptions {
+/** One relay call, described as data. Everything a caller must decide, named. */
+export interface RelayRequest {
+  kind: Kind;
+  pathname: string;
+  body?: unknown;
+  /** Defaults to POST. */
+  method?: string;
+  /**
+   * The model being asked for, which is what the outcome updates a verdict
+   * about. Omit for calls that name no model, such as fetching the catalogue.
+   */
+  model?: string;
+  /** Client's anthropic-beta header, filtered to relay-honoured values upstream. */
+  betas?: string;
   /**
    * Run on exactly this account and no other. Pooling normally balances by
    * utilization, which starves the busiest accounts — fine for serving traffic,
    * wrong when the caller's purpose is to reach a specific account.
    */
   onlyAccount?: string;
-  /** Client's anthropic-beta header, filtered to relay-honoured values upstream. */
-  betas?: string;
 }
 
 export interface Pool {
-  execute(
-    kind: Kind,
-    buildAndCall: (call: (pathname: string, body: unknown, method?: string) => Promise<Response>) => Promise<Response>,
-    model?: string,
-    options?: ExecuteOptions,
-  ): Promise<{ response: Response; accountId: string }>;
+  execute(req: RelayRequest): Promise<{ response: Response; accountId: string }>;
   deviceIdentityFor(a: DecryptedAccount): DeviceIdentity;
 }
 
@@ -108,16 +114,11 @@ export function createPool(opts: {
     opts.store.setFails(a.id, a.consecutiveFails + 1);
   }
 
-  async function execute(
-    kind: Kind,
-    buildAndCall: (call: (pathname: string, body: unknown, method?: string) => Promise<Response>) => Promise<Response>,
-    model?: string,
-    options?: ExecuteOptions,
-  ): Promise<{ response: Response; accountId: string }> {
+  async function execute(req: RelayRequest): Promise<{ response: Response; accountId: string }> {
     const cfg = opts.config;
     const deadline = Date.now() + cfg.maxWaitMs;
     const candidates = () =>
-      options?.onlyAccount ? opts.store.list().filter((a) => a.id === options.onlyAccount) : opts.store.list();
+      req.onlyAccount ? opts.store.list().filter((a) => a.id === req.onlyAccount) : opts.store.list();
     let fiveXX = 0;
     for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
       const sel = selectAccount(candidates(), Date.now());
@@ -144,20 +145,16 @@ export function createPool(opts: {
         ticket = await opts.ticketManager.ensure(a.id, token, identity);
       }
 
-      const ctx = { token, ticket, identity, sem: opts.sem };
-      const call = (pathname: string, body: unknown, method?: string) =>
-        callUpstream(ctx, pathname, body, kind, {
+      let resp: Response;
+      try {
+        resp = await callUpstream({ token, ticket, identity, sem: opts.sem }, req.pathname, req.body, req.kind, {
           deviceSigning: cfg.deviceSigning,
           appVersion: cfg.appVersion,
           relayBase: cfg.relayBase,
           fetchFn: opts.fetchFn,
-          method,
-          betas: options?.betas,
+          method: req.method,
+          betas: req.betas,
         });
-
-      let resp: Response;
-      try {
-        resp = await buildAndCall(call);
       } catch {
         coolBackoff(a);
         continue;
@@ -168,7 +165,7 @@ export function createPool(opts: {
       if (util != null) opts.store.setUtilization(a.id, util);
 
       const outcome = classifyOutcome(resp.status, gh);
-      if (model) opts.onOutcome?.(model, outcome);
+      if (req.model) opts.onOutcome?.(req.model, outcome);
 
       // A model the relay has no deployment for is not an account problem. Cooling
       // the pool for it would take every account offline over a model that will

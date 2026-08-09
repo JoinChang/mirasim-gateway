@@ -53,7 +53,11 @@ export async function runRound(opts: {
         max_tokens: task.maxTokens,
         messages: [{ role: "user", content: task.prompt }],
       };
-      const res = await opts.pool.execute("messages", (call) => call("/v1/messages", body), task.model, {
+      const res = await opts.pool.execute({
+        kind: "messages",
+        pathname: "/v1/messages",
+        body,
+        model: task.model,
         onlyAccount: target,
       });
       accountId = res.accountId;

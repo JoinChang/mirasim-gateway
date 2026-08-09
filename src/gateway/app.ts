@@ -155,7 +155,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
   route("/v1/responses", "responses", handleOpenAIResponses);
 
   app.get("/v1/models", async (c) => {
-    const { response } = await deps.pool.execute("chat", (call) => call("/v1/models", undefined, "GET"));
+    const { response } = await deps.pool.execute({ kind: "chat", pathname: "/v1/models", method: "GET" });
     const body: any = await response.json().catch(() => ({}));
     if (Array.isArray(body?.data)) {
       // The catalog is also how we discover models worth probing later.
