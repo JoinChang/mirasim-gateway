@@ -6,3 +6,4 @@ data/
 device.pem
 install.log
 pnpm-debug.log
+.scratch/
