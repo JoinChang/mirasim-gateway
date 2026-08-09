@@ -1,3 +1,5 @@
+import { totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
+
 export interface StreamUsage {
   inputTokens: number;
   outputTokens: number;
@@ -20,12 +22,11 @@ export function createUsageScanner() {
 
   const absorb = (u: any) => {
     if (!u || typeof u !== "object") return;
-    const input = u.input_tokens ?? u.prompt_tokens;
-    const output = u.output_tokens ?? u.completion_tokens;
     // Anthropic repeats input on later events as 0; the real figure is the max.
-    if (typeof input === "number") inputTokens = Math.max(inputTokens, input);
+    inputTokens = Math.max(inputTokens, totalInputTokens(u));
     // Output is cumulative per event, so the last non-zero report wins.
-    if (typeof output === "number" && output > 0) outputTokens = output;
+    const output = totalOutputTokens(u);
+    if (output > 0) outputTokens = output;
   };
 
   function push(chunk: string): void {

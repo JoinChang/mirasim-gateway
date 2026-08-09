@@ -51,4 +51,16 @@ describe("createUsageScanner", () => {
     s.push(sse("message_delta", { type: "message_delta", usage: { input_tokens: 0, output_tokens: 3 } }));
     expect(s.result()).toEqual({ inputTokens: 100, outputTokens: 3 });
   });
+
+  it("counts cached input, which Anthropic reports outside input_tokens", () => {
+    const s = createUsageScanner();
+    s.push(
+      sse("message_start", {
+        type: "message_start",
+        message: { usage: { input_tokens: 9, cache_creation_input_tokens: 0, cache_read_input_tokens: 4804 } },
+      }),
+    );
+    s.push(sse("message_delta", { type: "message_delta", usage: { output_tokens: 5 } }));
+    expect(s.result()).toEqual({ inputTokens: 4813, outputTokens: 5 });
+  });
 });

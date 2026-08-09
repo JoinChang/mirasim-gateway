@@ -2,6 +2,7 @@ import type { AccountsRepo } from "../db/repositories/accounts.js";
 import type { KeysRepo } from "../db/repositories/keys.js";
 import type { UsageRepo } from "../db/repositories/usage.js";
 import type { Metrics } from "../metrics/registry.js";
+import { totalInputTokens, totalOutputTokens } from "./tokens.js";
 
 export interface UsageInput {
   downstreamKeyId: string | null;
@@ -50,12 +51,10 @@ export function extractUsage(json: any): {
   cost: number | null;
 } {
   const u = json?.usage ?? {};
-  const inputTokens = u.input_tokens ?? u.prompt_tokens ?? u.input_tokens_details?.total ?? 0;
-  const outputTokens = u.output_tokens ?? u.completion_tokens ?? 0;
   const webSearchRequests = u.server_tool_use?.web_search_requests ?? u.web_search_requests ?? 0;
   return {
-    inputTokens: Number(inputTokens) || 0,
-    outputTokens: Number(outputTokens) || 0,
+    inputTokens: totalInputTokens(u),
+    outputTokens: totalOutputTokens(u),
     webSearchRequests: Number(webSearchRequests) || 0,
     cost: null,
   };

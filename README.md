@@ -55,6 +55,17 @@ the request is how the gateway finds out. Probe bodies deliberately ask for real
 output; `max_tokens: 1` is rejected as an invalid request, which would leave those
 models unprobeable forever.
 
+## Metering
+Token counts feed the `--daily-tokens` quota, so both paths have to agree. Two
+things made them undercount badly. Streamed responses were recorded as zero,
+which exempted every streaming client — Claude Code always streams — so the body
+is now metered as it passes through. And Anthropic reports `input_tokens` for the
+uncached part only: measured on this relay, a 4804-token cached prompt reports
+`input_tokens: 9`, and a real Claude Code turn reported 2 where the true figure
+was 547508. Cache creation and cache reads are added in, while OpenAI's
+`prompt_tokens` is taken as-is because it already counts them. The rule lives in
+`src/usage/tokens.ts` so the streaming and JSON paths cannot drift apart.
+
 ## Keeping accounts exercised
 `accounts exercise` runs one genuine task per account — reviewing this repo's own
 code and git history — and writes the answers to `data/exercise-<ts>.md`. The work
