@@ -14,6 +14,7 @@ import type { Metrics } from "../metrics/registry.js";
 import type { GatewayResult, SearchRow } from "../types/wire.js";
 import { HOP_BY_HOP } from "../upstream/relay.js";
 import type { Recorder } from "../usage/recorder.js";
+import { explainRelayError } from "./relayErrors.js";
 import { meterStream } from "./streamUsage.js";
 import { applyModelAlias, sha256Hex, utcDayStartMs } from "./util.js";
 
@@ -91,7 +92,11 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     // Whoever ran the request measured it; there is no second source to reconcile.
     if (result.type === "json") {
       rec(result.status, result.accountId ?? null, { ...result.usage, cost: null });
-      return c.json(result.json, result.status);
+      // The relay describes its own exhausted capacity as an auth failure; say
+      // what it actually means before the client renders "failed to authenticate".
+      const explained = explainRelayError(result.status, result.json);
+      if (explained) deps.metrics.relayExhausted.inc();
+      return c.json(explained ?? result.json, result.status);
     }
     if (result.type === "sse") {
       rec(result.status ?? 200, result.accountId ?? null, { ...result.usage, cost: null });

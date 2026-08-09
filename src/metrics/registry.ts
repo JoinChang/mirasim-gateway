@@ -12,6 +12,9 @@ export function createMetrics() {
   const searchAllowFallback = mk("mira_search_allow_fallback_total", "searches where allowDomains was discarded");
   const tokens = mk("mira_tokens_total", "tokens", ["dir"]);
   const http429 = mk("mira_http_429_total", "429 responses");
+  // The relay's shared budget being spent, which it reports as a 403 that reads
+  // like an auth failure. Distinct from 429, which is the account's own quota.
+  const relayExhausted = mk("mira_relay_exhausted_total", "relay shared-capacity rejections");
   const errors = mk("mira_errors_total", "errors");
   const perAccount = mk("mira_account_requests_total", "requests per account", ["account"]);
   const perKey = mk("mira_key_requests_total", "requests per downstream key", ["key"]);
@@ -23,6 +26,7 @@ export function createMetrics() {
     searchAllowFallback,
     tokens,
     http429,
+    relayExhausted,
     errors,
     perAccount,
     perKey,

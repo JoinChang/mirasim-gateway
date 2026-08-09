@@ -151,4 +151,20 @@ describe("gateway app", () => {
     expect(row.inputTokens).toBe(300);
     expect(row.outputTokens).toBe(30);
   });
+
+  it("explains the relay's exhausted-capacity 403 instead of passing on an auth-looking error", async () => {
+    const { app, metrics } = build({
+      script: [
+        () =>
+          R({ type: "error", error: { type: "permission_error", message: "This request was not authorized." } }, 403),
+      ],
+    });
+    const res = await post(app, "/v1/messages", { model: "c", messages: [] });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as any;
+    expect(body.error.message).toMatch(/capacity is exhausted/);
+    expect(body.error.message).toContain("This request was not authorized.");
+    const txt = await (await app.request("/metrics?format=prometheus")).text();
+    expect(txt).toMatch(/mira_relay_exhausted_total 1/);
+  });
 });
