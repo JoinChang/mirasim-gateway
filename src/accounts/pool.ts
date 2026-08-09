@@ -1,0 +1,190 @@
+import type { AppConfig } from "../config/index.js";
+import { type DeviceIdentity, generateIdentity, identityFromPem } from "../crypto/device.js";
+import { callUpstream } from "../upstream/client.js";
+import type { Kind } from "../upstream/relay.js";
+import type { Semaphore } from "../upstream/sem.js";
+import type { Refresher } from "./refresh.js";
+import type { AccountStore, DecryptedAccount } from "./store.js";
+import type { TicketManager } from "./ticket.js";
+
+export interface Selectable {
+  id: string;
+  disabledUntil: number;
+  lastUtilization: number;
+  lastUsedAt: number;
+}
+
+/** Enabled → least-utilized then LRU. All cooling → soonest-to-thaw + waitMs. */
+export function selectAccount<T extends Selectable>(accounts: T[], now: number): { account: T; waitMs: number } | null {
+  if (accounts.length === 0) return null;
+  const enabled = accounts.filter((a) => (a.disabledUntil ?? 0) <= now);
+  if (enabled.length) {
+    enabled.sort((a, b) => a.lastUtilization - b.lastUtilization || a.lastUsedAt - b.lastUsedAt);
+    return { account: enabled[0]!, waitMs: 0 };
+  }
+  const soon = [...accounts].sort((a, b) => (a.disabledUntil ?? 0) - (b.disabledUntil ?? 0))[0]!;
+  return { account: soon, waitMs: Math.max(0, (soon.disabledUntil ?? 0) - now) };
+}
+
+export function cooldownMsFrom(
+  getHeader: (k: string) => string | null | undefined,
+  consecutiveFails: number,
+  capMs: number,
+  now = Date.now(),
+): number {
+  const ra = getHeader("retry-after");
+  if (ra) {
+    const s = /^\d+$/.test(ra.trim()) ? Number(ra) * 1000 : Date.parse(ra) - now;
+    if (s > 0) return Math.min(s, capMs);
+  }
+  for (const h of ["anthropic-ratelimit-unified-5h-reset", "anthropic-ratelimit-unified-7d-reset"]) {
+    const v = getHeader(h);
+    if (v && /^\d+$/.test(v)) {
+      const ms = Number(v) * 1000 - now;
+      if (ms > 0 && ms < 10 * 60_000) return ms;
+    }
+  }
+  const n = Math.max(1, consecutiveFails + 1);
+  return Math.min(capMs, 8000 * 2 ** (n - 1));
+}
+
+function utilizationFrom(getHeader: (k: string) => string | null | undefined): number | null {
+  let u: number | null = null;
+  for (const h of ["anthropic-ratelimit-unified-5h-utilization", "anthropic-ratelimit-unified-7d-utilization"]) {
+    const v = getHeader(h);
+    if (v != null) {
+      const n = Number.parseFloat(v);
+      if (Number.isFinite(n)) u = Math.max(u ?? 0, n);
+    }
+  }
+  return u;
+}
+
+export interface Pool {
+  execute(
+    kind: Kind,
+    buildAndCall: (call: (pathname: string, body: unknown, method?: string) => Promise<Response>) => Promise<Response>,
+  ): Promise<{ response: Response; accountId: string }>;
+  deviceIdentityFor(a: DecryptedAccount): DeviceIdentity;
+}
+
+export function createPool(opts: {
+  store: AccountStore;
+  refresher: Refresher;
+  ticketManager: TicketManager;
+  config: AppConfig;
+  sem: Semaphore;
+  fetchFn: typeof fetch;
+}): Pool {
+  const idCache = new Map<string, DeviceIdentity>();
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  function deviceIdentityFor(a: DecryptedAccount): DeviceIdentity {
+    const shared = opts.store.getSharedDeviceKey();
+    if (shared) {
+      if (!idCache.has("__shared")) idCache.set("__shared", identityFromPem(shared));
+      return idCache.get("__shared")!;
+    }
+    if (idCache.has(a.id)) return idCache.get(a.id)!;
+    let pem = a.devicePrivateKey;
+    if (!pem) {
+      const gen = generateIdentity();
+      pem = gen.pem;
+      opts.store.setDeviceKey(a.id, pem);
+    }
+    const id = identityFromPem(pem);
+    idCache.set(a.id, id);
+    return id;
+  }
+
+  function coolBackoff(a: DecryptedAccount): void {
+    opts.store.setDisabledUntil(
+      a.id,
+      Date.now() + Math.min(opts.config.cooldownMs, 8000 * 2 ** Math.max(0, a.consecutiveFails)),
+    );
+    opts.store.setFails(a.id, a.consecutiveFails + 1);
+  }
+
+  async function execute(
+    kind: Kind,
+    buildAndCall: (call: (pathname: string, body: unknown, method?: string) => Promise<Response>) => Promise<Response>,
+  ): Promise<{ response: Response; accountId: string }> {
+    const cfg = opts.config;
+    const deadline = Date.now() + cfg.maxWaitMs;
+    let fiveXX = 0;
+    for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
+      const sel = selectAccount(opts.store.list(), Date.now());
+      if (!sel) break;
+      if (sel.waitMs > 0) {
+        if (Date.now() + sel.waitMs > deadline) break;
+        await sleep(sel.waitMs + 50);
+      }
+      const a = sel.account;
+      opts.store.setLastUsed(a.id, Date.now());
+
+      let token: string;
+      try {
+        token = await opts.refresher.ensureAccessToken(a);
+      } catch {
+        coolBackoff(a);
+        continue;
+      }
+
+      let ticket: string | null = null;
+      let identity: DeviceIdentity | null = null;
+      if (cfg.deviceSigning) {
+        identity = deviceIdentityFor(a);
+        ticket = await opts.ticketManager.ensure(a.id, token, identity);
+      }
+
+      const ctx = { token, ticket, identity, sem: opts.sem };
+      const call = (pathname: string, body: unknown, method?: string) =>
+        callUpstream(ctx, pathname, body, kind, {
+          deviceSigning: cfg.deviceSigning,
+          appVersion: cfg.appVersion,
+          relayBase: cfg.relayBase,
+          fetchFn: opts.fetchFn,
+          method,
+        });
+
+      let resp: Response;
+      try {
+        resp = await buildAndCall(call);
+      } catch {
+        coolBackoff(a);
+        continue;
+      }
+
+      const gh = (k: string) => resp.headers.get(k);
+      const util = utilizationFrom(gh);
+      if (util != null) opts.store.setUtilization(a.id, util);
+
+      if (resp.status === 429) {
+        resp.body?.cancel?.().catch(() => {});
+        opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
+        opts.store.setFails(a.id, a.consecutiveFails + 1);
+        continue;
+      }
+      if (resp.status >= 500 && fiveXX < cfg.retry5xx) {
+        resp.body?.cancel?.().catch(() => {});
+        fiveXX++;
+        await sleep(cfg.retry5xxDelayMs * fiveXX);
+        continue;
+      }
+      opts.store.setFails(a.id, 0);
+      return { response: resp, accountId: a.id };
+    }
+    return {
+      response: new Response(
+        JSON.stringify({ error: { type: "all_accounts_throttled", message: "all accounts currently throttled" } }),
+        {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+      accountId: "",
+    };
+  }
+
+  return { execute, deviceIdentityFor };
+}

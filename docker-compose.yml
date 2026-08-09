@@ -1,0 +1,23 @@
+services:
+  gateway:
+    build: .
+    image: mirasim-gateway
+    container_name: mirasim-gateway
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${PORT:-8788}:8788"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8788"
+      DATA_DIR: "/data"
+      MIRASIM_MASTER_KEY: "${MIRASIM_MASTER_KEY}"
+      FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY}"
+      MIRASIM_APP_VERSION: "${MIRASIM_APP_VERSION:-0.0.148}"
+      SEARCH_PROVIDER: "${SEARCH_PROVIDER:-firecrawl}"
+      DEVICE_SIGNING: "${DEVICE_SIGNING:-1}"
+      # MIRASIM_RELAY / MIRASIM_LOGIN / SERPER_API_KEY / SEARXNG_URL as needed
+    volumes:
+      - ./data:/data
+      - ./config.json:/app/config.json:ro
+    # Linux: if ./data writes fail, set to your host uid:gid
+    # user: "1000:1000"

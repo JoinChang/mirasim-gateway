@@ -1,0 +1,18 @@
+{
+  "searchProvider": "firecrawl",
+  "searchLimit": 5,
+  "maxConcurrency": 4,
+  "cooldownMs": 90000,
+  "maxWaitMs": 30000,
+  "maxAttempts": 8,
+  "retry5xx": 2,
+  "retry5xxDelayMs": 500,
+  "emitCitations": true,
+  "minResultsBeforeFallback": 2,
+  "deviceSigning": true,
+  "modelAliases": { "gpt-5-codex": "gpt-5.6", "opus": "claude-opus-5", "sonnet": "claude-sonnet-5", "haiku": "claude-haiku-4-5" },
+  "defaultModel": "",
+  "allowDomains": ["wikipedia.org","github.com","stackoverflow.com","developer.mozilla.org","docs.python.org","arxiv.org","huggingface.co","anthropic.com","openai.com","firecrawl.dev","reuters.com","apnews.com","bloomberg.com","ft.com","wsj.com","nytimes.com","bbc.com","theverge.com","techcrunch.com","arstechnica.com","wired.com","economist.com"],
+  "preferDomains": ["anthropic.com","openai.com","github.com","arxiv.org","wikipedia.org"],
+  "blockDomains": ["pinterest.com","tiktok.com","facebook.com","8world.com"]
+}

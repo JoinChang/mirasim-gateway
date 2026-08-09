@@ -1,0 +1,157 @@
+import { Hono } from "hono";
+import type { Pool } from "../accounts/pool.js";
+import type { AccountStore } from "../accounts/store.js";
+import type { AppConfig } from "../config/index.js";
+import type { KeysRepo } from "../db/repositories/keys.js";
+import type { UsageRepo } from "../db/repositories/usage.js";
+import type { DownstreamKey } from "../db/schema.js";
+import { handleMessages } from "../dialects/anthropic.js";
+import { handleOpenAIChat } from "../dialects/openai-chat.js";
+import { handleOpenAIResponses } from "../dialects/openai-responses.js";
+import type { Metrics } from "../metrics/registry.js";
+import type { GatewayResult, SearchRow } from "../types/wire.js";
+import { HOP_BY_HOP } from "../upstream/relay.js";
+import { extractUsage, type Recorder } from "../usage/recorder.js";
+import { applyModelAlias, sha256Hex, utcDayStartMs } from "./util.js";
+
+type Vars = { key?: DownstreamKey; openMode?: boolean };
+
+export interface AppDeps {
+  pool: Pool;
+  store: AccountStore;
+  cfg: AppConfig;
+  keys: KeysRepo;
+  usage: UsageRepo;
+  metrics: Metrics;
+  recorder: Recorder;
+  search: (query: string) => Promise<SearchRow[]>;
+}
+
+export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
+  const app = new Hono<{ Variables: Vars }>();
+  const { cfg } = deps;
+
+  // ---- downstream auth ----
+  app.use("/v1/*", async (c, next) => {
+    if (deps.keys.count() === 0) {
+      c.set("openMode", true);
+      return next();
+    }
+    const m = /^Bearer\s+(.+)$/i.exec(c.req.header("authorization") ?? "");
+    const key = (m?.[1] ?? c.req.header("x-api-key") ?? "").trim();
+    if (!key) return c.json({ error: { type: "unauthorized", message: "missing api key" } }, 401);
+    const row = deps.keys.findByHash(sha256Hex(key));
+    if (!row?.enabled) return c.json({ error: { type: "unauthorized", message: "invalid api key" } }, 401);
+    c.set("key", row);
+    return next();
+  });
+
+  // ---- per-key rate limit / daily token quota ----
+  const buckets = new Map<string, { count: number; windowStart: number }>();
+  app.use("/v1/*", async (c, next) => {
+    const key = c.get("key");
+    if (!key) return next();
+    const now = Date.now();
+    if (key.rpmLimit) {
+      const b = buckets.get(key.id) ?? { count: 0, windowStart: now };
+      if (now - b.windowStart >= 60_000) {
+        b.count = 0;
+        b.windowStart = now;
+      }
+      b.count++;
+      buckets.set(key.id, b);
+      if (b.count > key.rpmLimit) return c.json({ error: { type: "rate_limit", message: "rpm limit exceeded" } }, 429);
+    }
+    if (key.dailyTokenLimit && deps.usage.dailyTokensForKey(key.id, utcDayStartMs(now)) >= key.dailyTokenLimit)
+      return c.json({ error: { type: "rate_limit", message: "daily token limit exceeded" } }, 429);
+    return next();
+  });
+
+  const finish = (c: any, result: GatewayResult, dialect: string, model: string, started: number): Response => {
+    const keyId = c.get("key")?.id ?? null;
+    const rec = (
+      status: number,
+      accountId: string | null,
+      u: { inputTokens: number; outputTokens: number; webSearchRequests: number; cost: number | null },
+    ) =>
+      deps.recorder.record({
+        downstreamKeyId: keyId,
+        accountId,
+        dialect,
+        model,
+        ...u,
+        status,
+        viaRelay: true,
+        latencyMs: Date.now() - started,
+      });
+    if (result.type === "json") {
+      rec(result.status, result.accountId ?? null, extractUsage(result.json));
+      return c.json(result.json, result.status);
+    }
+    if (result.type === "sse") {
+      rec(result.status ?? 200, result.accountId ?? null, extractUsage(result.json));
+      return new Response(result.text, {
+        status: 200,
+        headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" },
+      });
+    }
+    // stream passthrough (tokens unknown here)
+    rec(result.response.status, result.accountId ?? null, {
+      inputTokens: 0,
+      outputTokens: 0,
+      webSearchRequests: 0,
+      cost: null,
+    });
+    const headers = new Headers();
+    result.response.headers.forEach((v, k) => {
+      if (!HOP_BY_HOP.has(k.toLowerCase())) headers.set(k, v);
+    });
+    return new Response(result.response.body, { status: result.response.status, headers });
+  };
+
+  const route = (
+    path: string,
+    dialect: "messages" | "chat" | "responses",
+    handler: (d: AppDeps, body: any, stream: boolean) => Promise<GatewayResult>,
+  ) =>
+    app.post(path, async (c) => {
+      const body = await c.req.json().catch(() => null);
+      if (!body) return c.json({ error: { type: "invalid_request", message: "invalid JSON body" } }, 400);
+      applyModelAlias(body, cfg);
+      const started = Date.now();
+      const result = await handler(deps, body, !!body.stream);
+      return finish(c, result, dialect, body.model ?? "", started);
+    });
+
+  route("/v1/messages", "messages", handleMessages);
+  route("/v1/chat/completions", "chat", handleOpenAIChat);
+  route("/v1/responses", "responses", handleOpenAIResponses);
+
+  app.get("/v1/models", async (c) => {
+    const { response } = await deps.pool.execute("chat", (call) => call("/v1/models", undefined, "GET"));
+    return c.json(await response.json().catch(() => ({})), response.status as any);
+  });
+
+  app.get("/health", (c) => {
+    const accts = deps.store.list();
+    const now = Date.now();
+    return c.json({
+      ok: true,
+      relay: cfg.relayBase,
+      provider: cfg.searchProvider,
+      signing: cfg.deviceSigning,
+      auth: deps.keys.count() > 0,
+      accounts: accts.length,
+      enabled: accts.filter((a) => a.disabledUntil <= now).length,
+    });
+  });
+
+  app.get("/metrics", async (c) => {
+    const wantProm = /format=prometheus/.test(c.req.url) || /text\/plain/.test(c.req.header("accept") ?? "");
+    if (wantProm)
+      return new Response(await deps.metrics.render(), { headers: { "content-type": "text/plain; version=0.0.4" } });
+    return c.json(await deps.metrics.json());
+  });
+
+  return app;
+}
