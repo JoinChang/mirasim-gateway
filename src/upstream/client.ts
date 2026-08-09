@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { DeviceIdentity } from "../crypto/device.js";
 import { signatureHeaders } from "../crypto/signing.js";
-import { sanitizeHeader } from "./headers.js";
+import { filterAnthropicBeta, sanitizeHeader } from "./headers.js";
 import { AGENT_FOR_KIND, type Kind, SERVER_SESSION } from "./relay.js";
 import type { Semaphore } from "./sem.js";
 
@@ -17,6 +17,8 @@ export interface CallOpts {
   relayBase: string;
   fetchFn: typeof fetch;
   method?: string;
+  /** Client's anthropic-beta header; only relay-honoured values are forwarded. */
+  betas?: string;
 }
 
 /** One signed relay request. Returns the raw Response (caller reads/streams). */
@@ -40,6 +42,12 @@ export function callUpstream(
   };
   if (hasBody) headers["content-type"] = "application/json";
   if (kind === "messages") headers["anthropic-version"] = (bodyObj as any)?.anthropic_version ?? "2023-06-01";
+  // Betas the relay does not honour are dropped rather than passed through: an
+  // unknown beta can change the response shape the dialects then have to parse.
+  if (opts.betas) {
+    const kept = filterAnthropicBeta({ "anthropic-beta": opts.betas })["anthropic-beta"];
+    if (kept) headers["anthropic-beta"] = kept;
+  }
   if (opts.deviceSigning && ctx.ticket && ctx.identity) {
     const sig = signatureHeaders(
       ctx.identity,

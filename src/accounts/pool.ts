@@ -56,6 +56,8 @@ export interface ExecuteOptions {
    * wrong when the caller's purpose is to reach a specific account.
    */
   onlyAccount?: string;
+  /** Client's anthropic-beta header, filtered to relay-honoured values upstream. */
+  betas?: string;
 }
 
 export interface Pool {
@@ -150,6 +152,7 @@ export function createPool(opts: {
           relayBase: cfg.relayBase,
           fetchFn: opts.fetchFn,
           method,
+          betas: options?.betas,
         });
 
       let resp: Response;

@@ -13,6 +13,7 @@ import type { Metrics } from "../metrics/registry.js";
 import type { GatewayResult, SearchRow } from "../types/wire.js";
 import { HOP_BY_HOP } from "../upstream/relay.js";
 import { extractUsage, type Recorder } from "../usage/recorder.js";
+import { meterStream } from "./streamUsage.js";
 import { applyModelAlias, sha256Hex, utcDayStartMs } from "./util.js";
 
 type Vars = { key?: DownstreamKey; openMode?: boolean };
@@ -97,24 +98,28 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" },
       });
     }
-    // stream passthrough (tokens unknown here)
-    rec(result.response.status, result.accountId ?? null, {
-      inputTokens: 0,
-      outputTokens: 0,
-      webSearchRequests: 0,
-      cost: null,
-    });
     const headers = new Headers();
     result.response.headers.forEach((v, k) => {
       if (!HOP_BY_HOP.has(k.toLowerCase())) headers.set(k, v);
     });
-    return new Response(result.response.body, { status: result.response.status, headers });
+    // Metered as the body streams past: recording zero here would exempt every
+    // streaming client from downstream key quotas, and streaming is the norm.
+    const record = (u: { inputTokens: number; outputTokens: number }) =>
+      rec(result.response.status, result.accountId ?? null, { ...u, webSearchRequests: 0, cost: null });
+    if (!result.response.body) {
+      record({ inputTokens: 0, outputTokens: 0 });
+      return new Response(null, { status: result.response.status, headers });
+    }
+    return new Response(meterStream(result.response.body, record), {
+      status: result.response.status,
+      headers,
+    });
   };
 
   const route = (
     path: string,
     dialect: "messages" | "chat" | "responses",
-    handler: (d: AppDeps, body: any, stream: boolean) => Promise<GatewayResult>,
+    handler: (d: AppDeps, body: any, stream: boolean, betas?: string) => Promise<GatewayResult>,
   ) =>
     app.post(path, async (c) => {
       const body = await c.req.json().catch(() => null);
@@ -135,7 +140,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
           400,
         );
       const started = Date.now();
-      const result = await handler(deps, body, !!body.stream);
+      const result = await handler(deps, body, !!body.stream, c.req.header("anthropic-beta"));
       return finish(c, result, dialect, body.model ?? "", started);
     });
 

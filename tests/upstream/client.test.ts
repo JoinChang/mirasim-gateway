@@ -43,4 +43,34 @@ describe("callUpstream", () => {
     expect(seen["x-mirasim-sig"]).toBeUndefined();
     expect(seen["x-mirasim-agent"]).toBe("codex");
   });
+
+  const call = async (betas: string | undefined) => {
+    let seen: any = null;
+    const fetchFn = (async (_u: string, init: any) => {
+      seen = init.headers;
+      return new Response("{}");
+    }) as any;
+    await callUpstream(
+      { token: "TKN", ticket: null, identity: null, sem: makeSemaphore(4) },
+      "/v1/messages",
+      { model: "m" },
+      "messages",
+      { deviceSigning: false, appVersion: "0.0.149", relayBase: "https://relay", fetchFn, betas },
+    );
+    return seen;
+  };
+
+  it("forwards the betas the relay honours, so a 1m context request survives the hop", async () => {
+    const seen = await call("claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14");
+    expect(seen["anthropic-beta"]).toBe("context-1m-2025-08-07");
+  });
+
+  it("sends no beta header when the client asked only for ones the relay ignores", async () => {
+    const seen = await call("claude-code-20250219,effort-2025-11-24");
+    expect(seen["anthropic-beta"]).toBeUndefined();
+  });
+
+  it("sends no beta header when the client sent none", async () => {
+    expect((await call(undefined))["anthropic-beta"]).toBeUndefined();
+  });
 });

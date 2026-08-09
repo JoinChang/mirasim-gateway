@@ -60,19 +60,25 @@ function makeAdapter(body: any, cfg: DialectDeps["cfg"]): DialectAdapter {
   };
 }
 
-export async function handleOpenAIChat(deps: DialectDeps, body: any, stream: boolean): Promise<GatewayResult> {
+export async function handleOpenAIChat(
+  deps: DialectDeps,
+  body: any,
+  stream: boolean,
+  betas?: string,
+): Promise<GatewayResult> {
   if (!wantsWebSearch(body)) {
     const { response, accountId } = await deps.pool.execute(
       "chat",
       (call) => call("/v1/chat/completions", body),
       body.model,
+      { betas },
     );
     if (stream && response.status === 200) return { type: "stream", response, accountId };
     return { type: "json", status: response.status, json: await response.json().catch(() => null), accountId };
   }
   const out = await runWebSearchLoop({
     adapter: makeAdapter(body, deps.cfg),
-    hop: (b) => hopJson(deps.pool, "chat", "/v1/chat/completions", b),
+    hop: (b) => hopJson(deps.pool, "chat", "/v1/chat/completions", b, betas),
     search: deps.search,
     maxUses: 4,
   });

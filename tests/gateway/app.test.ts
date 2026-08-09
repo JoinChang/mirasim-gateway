@@ -33,8 +33,10 @@ function build(opts: {
     () => R({ content: [{ type: "text", text: "hi" }], usage: { input_tokens: 3, output_tokens: 2 } }),
   ];
   const bodies = opts.bodies;
+  const execOptions: any[] = [];
   const pool: Pool = {
-    execute: async (_k, buildAndCall) => {
+    execute: async (_k, buildAndCall, _model, options) => {
+      execOptions.push(options);
       const call = async (_p: string, b: unknown) => {
         if (bodies) bodies.push(b);
         const n = script.shift();
@@ -46,7 +48,12 @@ function build(opts: {
   };
   const search = async (q: string) => [{ url: `http://res/${q}`, title: "T", description: "D" }];
   const modelStatus = modelStatusRepo(db);
-  return { app: createApp({ pool, store, cfg, keys, usage, metrics, recorder, search, modelStatus }), metrics };
+  return {
+    app: createApp({ pool, store, cfg, keys, usage, metrics, recorder, search, modelStatus }),
+    metrics,
+    db,
+    execOptions,
+  };
 }
 
 const post = (app: any, path: string, body: unknown, headers: Record<string, string> = {}) =>
@@ -102,5 +109,33 @@ describe("gateway app", () => {
     const h = { authorization: "Bearer sk" };
     expect((await post(app, "/v1/messages", { model: "c", messages: [] }, h)).status).toBe(200);
     expect((await post(app, "/v1/messages", { model: "c", messages: [] }, h)).status).toBe(429);
+  });
+
+  it("meters a streamed response instead of recording it as zero", async () => {
+    const sse =
+      'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":11}}}\n\n' +
+      'event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":5}}\n\n';
+    const { app, db } = build({
+      script: [() => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } })],
+    });
+    const res = await post(app, "/v1/messages", { model: "c", stream: true, messages: [] });
+    await res.text();
+    await new Promise((r) => setTimeout(r, 10));
+    const row: any = db.$client
+      .prepare("select input_tokens, output_tokens from usage_events order by ts desc limit 1")
+      .get();
+    expect(row.input_tokens).toBe(11);
+    expect(row.output_tokens).toBe(5);
+  });
+
+  it("passes the client's anthropic-beta down to the upstream call", async () => {
+    const { app, execOptions } = build({});
+    await post(
+      app,
+      "/v1/messages",
+      { model: "c", messages: [] },
+      { "anthropic-beta": "context-1m-2025-08-07,claude-code-20250219" },
+    );
+    expect(execOptions[0]?.betas).toBe("context-1m-2025-08-07,claude-code-20250219");
   });
 });
