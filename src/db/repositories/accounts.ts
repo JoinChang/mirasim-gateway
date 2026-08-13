@@ -28,6 +28,12 @@ export function accountsRepo(db: DB) {
     setFails(id: string, n: number): void {
       db.update(accounts).set({ consecutiveFails: n }).where(eq(accounts.id, id)).run();
     },
+    setProfile(id: string, p: { email?: string; plan?: string }): void {
+      const set: Record<string, string> = {};
+      if (p.email) set.email = p.email;
+      if (p.plan) set.plan = p.plan;
+      if (Object.keys(set).length) db.update(accounts).set(set).where(eq(accounts.id, id)).run();
+    },
     setRefreshToken(id: string, token: string): void {
       db.update(accounts).set({ refreshToken: token }).where(eq(accounts.id, id)).run();
     },

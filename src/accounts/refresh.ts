@@ -32,7 +32,14 @@ export function createRefresher(opts: {
       throw new Error("refresh returned no access_token");
     }
     if (body.refresh_token) opts.store.setRefreshToken(account.id, body.refresh_token);
-    const exp = Number(decodeJwt(body.access_token)?.exp ?? nowSec() + 3600);
+    const claims = decodeJwt(body.access_token);
+    // The token that proves the account also describes it. Recording that here
+    // is the difference between a live field and a snapshot: `plan` and `email`
+    // used to be written once at `accounts add` and never again — and
+    // `accounts import` wrote neither, which is why four accounts read as
+    // planless for months while nothing was actually wrong with them.
+    opts.store.setProfile(account.id, { email: claims?.email, plan: claims?.plan });
+    const exp = Number(claims?.exp ?? nowSec() + 3600);
     cache.set(account.id, { token: body.access_token, exp });
     return body.access_token;
   }

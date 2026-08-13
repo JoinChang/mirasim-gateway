@@ -52,6 +52,7 @@ export function accountStore(opts: { db: DB; masterKey: Buffer | null }) {
     setUtilization: (id: string, u: number) => repo.setUtilization(id, u),
     setLastUsed: (id: string, ms: number) => repo.setLastUsed(id, ms),
     setFails: (id: string, n: number) => repo.setFails(id, n),
+    setProfile: (id: string, p: { email?: string; plan?: string }) => repo.setProfile(id, p),
     setRefreshToken: (id: string, plain: string) => repo.setRefreshToken(id, mk ? seal(plain, mk) : plain),
     setDeviceKey: (id: string, pem: string) => repo.setDeviceKey(id, mk ? seal(pem, mk) : pem),
     getSharedDeviceKey: (): string | null => {

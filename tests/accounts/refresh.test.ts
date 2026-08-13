@@ -42,3 +42,33 @@ describe("refresh", () => {
     expect(tok).toMatch(/^eyJ/); // returned cached despite 500
   });
 });
+
+describe("refresh records what the token says about the account", () => {
+  it("writes plan and email from the claims, so they stop being add-time snapshots", async () => {
+    const db = memDb();
+    const store = accountStore({ db, masterKey: null });
+    // The import path writes neither, which is exactly the state four accounts were in.
+    store.add({ id: "a1", refreshToken: "r1", email: "", plan: "" });
+    const fetchFn = (async () =>
+      jsonResponse({
+        access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600, email: "who@example.com", plan: "max" }),
+        refresh_token: "r2",
+      })) as any;
+    const r = createRefresher({ store, loginBase: "https://login", fetchFn });
+    await r.ensureAccessToken(store.get("a1")!);
+    const a = store.get("a1")!;
+    expect(a.plan).toBe("max");
+    expect(a.email).toBe("who@example.com");
+  });
+
+  it("leaves a known plan alone when the claims carry none", async () => {
+    const db = memDb();
+    const store = accountStore({ db, masterKey: null });
+    store.add({ id: "a1", refreshToken: "r1", email: "keep@example.com", plan: "max" });
+    const fetchFn = (async () =>
+      jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) })) as any;
+    await createRefresher({ store, loginBase: "https://login", fetchFn }).ensureAccessToken(store.get("a1")!);
+    expect(store.get("a1")!.plan).toBe("max");
+    expect(store.get("a1")!.email).toBe("keep@example.com");
+  });
+});
