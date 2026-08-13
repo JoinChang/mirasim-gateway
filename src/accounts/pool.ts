@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config/index.js";
 import { type DeviceIdentity, generateIdentity, identityFromPem } from "../crypto/device.js";
-import { classifyOutcome, type Outcome, utilizationFrom } from "../models/classify.js";
+import { classifyOutcome, type Outcome, relayErrorType, utilizationFrom } from "../models/classify.js";
 import { callUpstream } from "../upstream/client.js";
 import type { Kind } from "../upstream/relay.js";
 import type { Semaphore } from "../upstream/sem.js";
@@ -15,10 +15,14 @@ import type { TicketManager } from "./ticket.js";
  * bodies are small; `retry-after` rides along because it is what turned this
  * status into a throttle in the first place.
  */
-async function said(resp: Response, gh: (k: string) => string | null): Promise<{ body?: string; retryAfter?: string }> {
+async function said(
+  resp: Response,
+  gh: (k: string) => string | null,
+  known: string | null,
+): Promise<{ body?: string; retryAfter?: string }> {
   const retryAfter = gh("retry-after") ?? undefined;
   try {
-    const t = (await resp.text()).trim();
+    const t = (known ?? (await resp.text())).trim();
     return { ...(t ? { body: t.slice(0, 300) } : {}), ...(retryAfter ? { retryAfter } : {}) };
   } catch {
     return retryAfter ? { retryAfter } : {};
@@ -200,12 +204,31 @@ export function createPool(opts: {
         continue;
       }
 
+      // A 429 cannot be judged from its headers alone — the relay answers with
+      // it for a throttled account, for a model it has no deployment for, and
+      // for its own shared budget running out, and only the body tells the third
+      // apart. Read once here; the response is rebuilt so callers still get one.
+      let text: string | null = null;
+      if (resp.status === 429) {
+        text = await resp.text().catch(() => "");
+        resp = new Response(text, { status: resp.status, headers: resp.headers });
+      }
+
       const gh = (k: string) => resp.headers.get(k);
       const util = utilizationFrom(gh);
       if (util != null) opts.store.setUtilization(a.id, util);
 
-      const outcome = classifyOutcome(resp.status, gh);
+      const outcome = classifyOutcome(resp.status, gh, { errorType: text ? relayErrorType(text) : undefined });
       if (req.model) opts.onOutcome?.(req.model, outcome);
+
+      // The relay's shared budget, not this account's. Every pooled account
+      // draws on the same pot, so cooling this one and walking to the next only
+      // repeats the rejection five times and leaves five healthy accounts
+      // looking failed. Hand back the relay's own answer instead.
+      if (outcome.kind === "relay_exhausted") {
+        opts.store.setFails(a.id, 0);
+        return { response: resp, accountId: a.id };
+      }
 
       // A model the relay has no deployment for is not an account problem. Cooling
       // the pool for it would take every account offline over a model that will
@@ -224,7 +247,7 @@ export function createPool(opts: {
           stage: "throttled",
           status: resp.status,
           ...ticketMissing,
-          ...(await said(resp, gh)),
+          ...(await said(resp, gh, text)),
         });
         opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
         opts.store.setFails(a.id, a.consecutiveFails + 1);
@@ -236,7 +259,7 @@ export function createPool(opts: {
           stage: "server_error",
           status: resp.status,
           ...ticketMissing,
-          ...(await said(resp, gh)),
+          ...(await said(resp, gh, text)),
         });
         fiveXX++;
         await sleep(cfg.retry5xxDelayMs * fiveXX);

@@ -63,9 +63,19 @@ Probe bodies need a plausible `max_tokens` — the relay rejects `max_tokens: 1`
 with 400 `invalid_request_error`, which says nothing about the model and leaves it
 unprobeable.
 
-`all_accounts_throttled` is the fall-through of `pool.execute`, not a diagnosis:
-it also fires on no accounts, deadline exceeded, a token refresh that threw, and a
-call that threw. Check the model's verdict before believing it.
+`pool.execute`'s fall-through now names what it hit — per attempt, with the stage,
+the status, `retry-after`, and the relay's own error body. Read `error.attempts`
+before theorising; `all_accounts_throttled` is reserved for when throttling really
+was all of it, and `pool_exhausted` / `no_accounts` cover the rest.
+
+A 429 means three different things and only the body separates them: this account
+is throttled, the relay has no deployment for the model, or **the relay's shared
+budget is spent** (`credit_exhausted_shared`, also `shared_quota_unavailable`).
+The last one sends `retry-after: 3600` and so read as an account throttle for four
+days, cooling five healthy accounts sitting at 20% of their own quota. Every
+pooled account draws on that one budget, so failing over cannot help and the pool
+returns it immediately. An account is only blamed once its own utilization reaches
+100% — the same bar the app uses.
 
 Keep-alive is scheduled by launchd calling `docker compose exec` — don't add a
 host-side scheduler that opens the database directly.

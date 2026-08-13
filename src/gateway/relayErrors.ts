@@ -12,21 +12,32 @@
  * rewritten, since that is the string clients print, and the relay's own wording
  * is kept inside it.
  */
+const SHARED_BUDGET =
+  "relay cloud capacity is exhausted — this is the relay's shared budget, not your account, " +
+  "and every pooled account draws on it, so retrying on another will not help. ";
+
+/** The relay has since started naming this condition outright, on a 429. */
+const NAMED_TYPES = new Set(["credit_exhausted_shared", "shared_quota_unavailable"]);
+
 export function explainRelayError(status: number, json: any): any | null {
-  if (status !== 403) return null;
   if (!json || typeof json !== "object") return null;
   const err = json.error;
-  if (!err || typeof err !== "object" || err.type !== "permission_error") return null;
+  if (!err || typeof err !== "object") return null;
+
+  const named = status === 429 && typeof err.type === "string" && NAMED_TYPES.has(err.type);
+  if (status !== 403 && !named) return null;
+  if (status === 403 && err.type !== "permission_error") return null;
 
   const upstream = typeof err.message === "string" ? err.message : "";
+  // The relay's newer wording already says this plainly, and in two languages;
+  // keeping it whole beats paraphrasing it.
   return {
     ...json,
     error: {
       ...err,
-      message:
-        "relay cloud capacity is exhausted — this is the relay's shared budget, not your account, " +
-        "and every pooled account draws on it, so retrying on another will not help. " +
-        `Try again in a few minutes. Upstream said: ${upstream}`,
+      message: named
+        ? `${SHARED_BUDGET}${upstream}`
+        : `${SHARED_BUDGET}Try again in a few minutes. Upstream said: ${upstream}`,
     },
   };
 }
