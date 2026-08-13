@@ -18,6 +18,40 @@ export interface Task {
 const MAX_MATERIAL = 6_000;
 const MAX_OUTPUT = 600;
 
+/**
+ * Just enough of a model_status row to decide whether a round may use it.
+ *
+ * `state` is deliberately the row's own widened string rather than the
+ * `ModelState` union: the rule below is an exclusion, so a state this build has
+ * never heard of should be tried, not silently dropped.
+ */
+export interface ModelChoice {
+  model: string;
+  state: string;
+  /** Set when LiteLLM served something other than what was asked for. */
+  servedModel?: string | null;
+}
+
+/**
+ * Which models a round is allowed to work on.
+ *
+ * Two exclusions, both about billing the wrong thing: a model the relay has no
+ * deployment for, and one where LiteLLM silently served a different model than
+ * the name asked for.
+ *
+ * `unknown` is allowed, on the same reasoning the gateway already applies to
+ * downstream traffic — a request is how a verdict gets made. Requiring `ok`
+ * deadlocks: while the relay is refusing every call the prober cannot form a
+ * verdict, so a model reset to `unknown` stays there, and a round pinned to it
+ * never runs again. That cost four days of keep-alive.
+ */
+export function selectModels(rows: ModelChoice[], wanted: string[] | null): string[] {
+  const usable = rows
+    .filter((m) => m.state !== "unavailable" && !m.servedModel && m.model.startsWith("claude-"))
+    .map((m) => m.model);
+  return wanted ? usable.filter((m) => wanted.includes(m)) : usable;
+}
+
 const clip = (s: string) => (s.length > MAX_MATERIAL ? `${s.slice(0, MAX_MATERIAL)}\n…[truncated]` : s);
 
 /**

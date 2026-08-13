@@ -14,7 +14,7 @@ import { keysRepo } from "../db/repositories/keys.js";
 import { sha256Hex } from "../gateway/util.js";
 import { runRound } from "../keepalive/runner.js";
 import { summarizeRound } from "../keepalive/summary.js";
-import { buildTasks, gatherMaterial, nodeMaterialSource } from "../keepalive/tasks.js";
+import { buildTasks, gatherMaterial, nodeMaterialSource, selectModels } from "../keepalive/tasks.js";
 import { buildRuntime } from "../runtime.js";
 
 function parseArgs(argv: string[]): { _: string[]; flags: Record<string, string | boolean> } {
@@ -69,12 +69,7 @@ async function cmdModelsStatus(cfg: AppConfig) {
 
 async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string | boolean>) {
   const rt = buildRuntime(cfg);
-  // Only models proven good and serving what they claim: a LiteLLM fallback
-  // (servedModel set) would silently bill a different model than intended.
-  const known = rt.modelStatus
-    .list()
-    .filter((m) => m.state === "ok" && !m.servedModel && m.model.startsWith("claude-"))
-    .map((m) => m.model);
+  const rows = rt.modelStatus.list();
   const wanted =
     typeof flags.models === "string"
       ? String(flags.models)
@@ -82,12 +77,13 @@ async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string 
           .map((s) => s.trim())
           .filter(Boolean)
       : null;
-  const usable = wanted ? known.filter((m) => wanted.includes(m)) : known;
+  const usable = selectModels(rows, wanted);
   if (!usable.length) {
+    const available = selectModels(rows, null);
     log(
       wanted
-        ? `none of the requested models are currently known-good (have: ${known.join(", ") || "none"})`
-        : "no model is currently known-good — run `models probe` first",
+        ? `none of the requested models are usable (have: ${available.join(", ") || "none"})`
+        : "no model is usable — run `models probe` first",
     );
     process.exit(1);
   }
