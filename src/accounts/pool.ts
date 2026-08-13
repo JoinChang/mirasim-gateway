@@ -4,9 +4,34 @@ import { classifyOutcome, type Outcome, utilizationFrom } from "../models/classi
 import { callUpstream } from "../upstream/client.js";
 import type { Kind } from "../upstream/relay.js";
 import type { Semaphore } from "../upstream/sem.js";
+import { type AttemptFailure, exhaustedResponse, type Stop } from "./exhausted.js";
 import type { Refresher } from "./refresh.js";
 import type { AccountStore, DecryptedAccount } from "./store.js";
 import type { TicketManager } from "./ticket.js";
+
+/**
+ * What the relay said when it refused. The body is read (not cancelled) because
+ * a discarded error body is exactly the evidence an outage needs, and error
+ * bodies are small; `retry-after` rides along because it is what turned this
+ * status into a throttle in the first place.
+ */
+async function said(resp: Response, gh: (k: string) => string | null): Promise<{ body?: string; retryAfter?: string }> {
+  const retryAfter = gh("retry-after") ?? undefined;
+  try {
+    const t = (await resp.text()).trim();
+    return { ...(t ? { body: t.slice(0, 300) } : {}), ...(retryAfter ? { retryAfter } : {}) };
+  } catch {
+    return retryAfter ? { retryAfter } : {};
+  }
+}
+
+/** Thrown values are not always Errors; the fall-through still has to print one. */
+const errText = (e: unknown): string =>
+  e instanceof Error
+    ? typeof (e as any).status === "number"
+      ? `${e.message} (HTTP ${(e as any).status})`
+      : e.message
+    : String(e);
 
 export interface Selectable {
   id: string;
@@ -120,11 +145,21 @@ export function createPool(opts: {
     const candidates = () =>
       req.onlyAccount ? opts.store.list().filter((a) => a.id === req.onlyAccount) : opts.store.list();
     let fiveXX = 0;
+    // What each attempt actually hit. Without this the fall-through can only
+    // guess, and it guessed "throttled" for every one of them.
+    const failures: AttemptFailure[] = [];
+    let stop: Stop = "max_attempts";
     for (let attempt = 0; attempt < cfg.maxAttempts; attempt++) {
       const sel = selectAccount(candidates(), Date.now());
-      if (!sel) break;
+      if (!sel) {
+        stop = "no_accounts";
+        break;
+      }
       if (sel.waitMs > 0) {
-        if (Date.now() + sel.waitMs > deadline) break;
+        if (Date.now() + sel.waitMs > deadline) {
+          stop = "deadline";
+          break;
+        }
         await sleep(sel.waitMs + 50);
       }
       const a = sel.account;
@@ -133,7 +168,8 @@ export function createPool(opts: {
       let token: string;
       try {
         token = await opts.refresher.ensureAccessToken(a);
-      } catch {
+      } catch (e) {
+        failures.push({ accountId: a.id, stage: "refresh", error: errText(e) });
         coolBackoff(a);
         continue;
       }
@@ -144,6 +180,9 @@ export function createPool(opts: {
         identity = deviceIdentityFor(a);
         ticket = await opts.ticketManager.ensure(a.id, token, identity);
       }
+      // `ensure` returns null rather than throwing, so an unticketed request is
+      // indistinguishable from a signed one unless the attempt records it.
+      const ticketMissing = cfg.deviceSigning && !ticket ? { ticketMissing: true } : {};
 
       let resp: Response;
       try {
@@ -155,7 +194,8 @@ export function createPool(opts: {
           method: req.method,
           betas: req.betas,
         });
-      } catch {
+      } catch (e) {
+        failures.push({ accountId: a.id, stage: "call", error: errText(e), ...ticketMissing });
         coolBackoff(a);
         continue;
       }
@@ -177,13 +217,27 @@ export function createPool(opts: {
       }
 
       if (outcome.kind === "account_throttled") {
-        resp.body?.cancel?.().catch(() => {});
+        // Read before discarding: the relay's own words are the only thing that
+        // distinguishes a quota throttle from a refusal wearing a 429.
+        failures.push({
+          accountId: a.id,
+          stage: "throttled",
+          status: resp.status,
+          ...ticketMissing,
+          ...(await said(resp, gh)),
+        });
         opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
         opts.store.setFails(a.id, a.consecutiveFails + 1);
         continue;
       }
       if (resp.status >= 500 && fiveXX < cfg.retry5xx) {
-        resp.body?.cancel?.().catch(() => {});
+        failures.push({
+          accountId: a.id,
+          stage: "server_error",
+          status: resp.status,
+          ...ticketMissing,
+          ...(await said(resp, gh)),
+        });
         fiveXX++;
         await sleep(cfg.retry5xxDelayMs * fiveXX);
         continue;
@@ -191,16 +245,7 @@ export function createPool(opts: {
       opts.store.setFails(a.id, 0);
       return { response: resp, accountId: a.id };
     }
-    return {
-      response: new Response(
-        JSON.stringify({ error: { type: "all_accounts_throttled", message: "all accounts currently throttled" } }),
-        {
-          status: 429,
-          headers: { "content-type": "application/json" },
-        },
-      ),
-      accountId: "",
-    };
+    return { response: exhaustedResponse(failures, stop), accountId: "" };
   }
 
   return { execute, deviceIdentityFor };
