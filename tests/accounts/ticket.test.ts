@@ -11,7 +11,7 @@ describe("ticket manager", () => {
       expect(url).toContain("/v1/device/session");
       return jsonResponse({ ticket: "TK", expiresIn: 600 });
     }) as any;
-    const tm = createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: "0.0.149" });
+    const tm = createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: "0.0.150" });
     const id = generateIdentity();
     expect(await tm.ensure("u", "issuer", id)).toBe("TK");
     expect(await tm.ensure("u", "issuer", id)).toBe("TK"); // cached
@@ -19,7 +19,7 @@ describe("ticket manager", () => {
   });
   it("marks unsupported on 404 and returns null", async () => {
     const fetchFn = (async () => new Response("no", { status: 404 })) as any;
-    const tm = createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: "0.0.149" });
+    const tm = createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: "0.0.150" });
     expect(await tm.ensure("u", "issuer", generateIdentity())).toBeNull();
   });
 });

@@ -7,7 +7,7 @@ describe("config", () => {
     expect(c.searchProvider).toBe("firecrawl");
     expect(c.deviceSigning).toBe(true);
     expect(c.maxConcurrency).toBe(4);
-    expect(c.appVersion).toBe("0.0.149");
+    expect(c.appVersion).toBe("0.0.150");
     expect(c.loginBase).toBe("https://admin.test.mirofish.ai");
   });
   it("env overrides file", () => {

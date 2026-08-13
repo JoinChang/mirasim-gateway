@@ -16,11 +16,11 @@ describe("callUpstream", () => {
       "/v1/messages",
       { model: "m", messages: [] },
       "messages",
-      { deviceSigning: true, appVersion: "0.0.149", relayBase: "https://relay", fetchFn },
+      { deviceSigning: true, appVersion: "0.0.150", relayBase: "https://relay", fetchFn },
     );
     expect(seen.url).toBe("https://relay/v1/messages");
     expect(seen.headers.authorization).toBe("Bearer TICKET");
-    expect(seen.headers["x-mirasim-client"]).toBe("0.0.149");
+    expect(seen.headers["x-mirasim-client"]).toBe("0.0.150");
     expect(seen.headers["x-mirasim-agent"]).toBe("claude");
     expect(seen.headers["x-mirasim-session"]).toBeTruthy();
     expect(seen.headers["x-mirasim-sig"]).toBeTruthy();
@@ -37,7 +37,7 @@ describe("callUpstream", () => {
       "/v1/chat/completions",
       { model: "m" },
       "chat",
-      { deviceSigning: false, appVersion: "0.0.149", relayBase: "https://relay", fetchFn },
+      { deviceSigning: false, appVersion: "0.0.150", relayBase: "https://relay", fetchFn },
     );
     expect(seen.authorization).toBe("Bearer TKN");
     expect(seen["x-mirasim-sig"]).toBeUndefined();
@@ -55,7 +55,7 @@ describe("callUpstream", () => {
       "/v1/messages",
       { model: "m" },
       "messages",
-      { deviceSigning: false, appVersion: "0.0.149", relayBase: "https://relay", fetchFn, betas },
+      { deviceSigning: false, appVersion: "0.0.150", relayBase: "https://relay", fetchFn, betas },
     );
     return seen;
   };
