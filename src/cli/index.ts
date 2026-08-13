@@ -88,8 +88,18 @@ async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string 
     process.exit(1);
   }
 
+  // `--account` exists so a change that can cost credentials — a new login host,
+  // a re-import — can be tried on one account before the other four follow.
+  const all = rt.store.list().map((a) => a.id);
+  const only = typeof flags.account === "string" ? String(flags.account) : null;
+  const accountIds = only ? all.filter((id) => id === only || id.startsWith(only)) : all;
+  if (only && !accountIds.length) {
+    log(`no account matches ${only} (have: ${all.map((id) => id.slice(0, 16)).join(", ")})`);
+    process.exit(1);
+  }
+
   const tasks = buildTasks({ models: usable, ...gatherMaterial(nodeMaterialSource) });
-  log(`exercising ${rt.store.list().length} accounts with ${tasks.length} real tasks over ${usable.length} models`);
+  log(`exercising ${accountIds.length} accounts with ${tasks.length} real tasks over ${usable.length} models`);
   if (flags["dry-run"]) {
     for (const t of tasks) log(`  ${t.label.padEnd(34)} ${t.model.padEnd(20)} ~${t.prompt.length} chars in`);
     return;
@@ -100,7 +110,7 @@ async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string 
     pool: rt.pool,
     usage: rt.usage,
     tasks,
-    accountIds: rt.store.list().map((a) => a.id),
+    accountIds,
     gapMs: flags.gap ? Number(flags.gap) : 3000,
     onResult: (r) =>
       log(
@@ -108,10 +118,7 @@ async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string 
       ),
   });
 
-  const summary = summarizeRound(
-    events,
-    rt.store.list().map((a) => a.id),
-  );
+  const summary = summarizeRound(events, accountIds);
   log("");
   log("account                             reqs  in      out     fails  avg latency");
   for (const [id, t] of Object.entries(summary.perAccount))

@@ -80,7 +80,12 @@ export function loadConfig(input: { fileJson: Record<string, unknown>; env: Node
     ...validated,
     appVersion: env.MIRASIM_APP_VERSION || "0.0.150",
     relayBase: stripSlash(env.MIRASIM_RELAY || "https://mirasim-relay.mirofish.ai"),
-    loginBase: stripSlash(env.MIRASIM_LOGIN || "https://admin.test.mirofish.ai"),
+    // App 0.0.173 resolves its login host as `acs || LOGIN_URL || ocs`, and `acs`
+    // is this string — so the old `admin.test.mirofish.ai` is now a branch the
+    // app can never reach. Both still answer /auth/refresh identically, and a
+    // canary account refreshed against this one and was then accepted by the
+    // relay, so the move is verified rather than inferred.
+    loginBase: stripSlash(env.MIRASIM_LOGIN || "https://auth.mirasim.ai"),
     firecrawlKey: env.FIRECRAWL_API_KEY,
     host: env.HOST || "127.0.0.1",
     port: env.PORT ? Number(env.PORT) : 8788,

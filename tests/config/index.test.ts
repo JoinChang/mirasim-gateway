@@ -8,7 +8,7 @@ describe("config", () => {
     expect(c.deviceSigning).toBe(true);
     expect(c.maxConcurrency).toBe(4);
     expect(c.appVersion).toBe("0.0.150");
-    expect(c.loginBase).toBe("https://admin.test.mirofish.ai");
+    expect(c.loginBase).toBe("https://auth.mirasim.ai");
   });
   it("env overrides file", () => {
     const c = loadConfig({ fileJson: { searchProvider: "serper" }, env: { SEARCH_PROVIDER: "searxng" } });
