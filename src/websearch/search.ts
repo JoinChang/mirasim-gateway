@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config/index.js";
 import type { SearchRow } from "../types/wire.js";
-import { filterRows, type FilterHooks } from "./filter.js";
+import { type FilterHooks, filterRows } from "./filter.js";
 import { PROVIDERS } from "./providers/index.js";
 
 export function makeSearch(
