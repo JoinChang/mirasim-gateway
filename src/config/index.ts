@@ -79,7 +79,12 @@ export function loadConfig(input: { fileJson: Record<string, unknown>; env: Node
   return {
     ...validated,
     appVersion: env.MIRASIM_APP_VERSION || "0.0.150",
-    relayBase: stripSlash(env.MIRASIM_RELAY || "https://mirasim-relay.mirofish.ai"),
+    // App 0.0.182 dropped `mirasim-relay.mirofish.ai` entirely — the constant it
+    // resolves the relay from is this host, and the old name appears nowhere in
+    // that build. Both answer identically today (same accounts, same tickets,
+    // and the same shared-quota rejection), so this is a move ahead of the old
+    // name's retirement, not a fix for anything.
+    relayBase: stripSlash(env.MIRASIM_RELAY || "https://relay.mirasim.ai"),
     // App 0.0.173 resolves its login host as `acs || LOGIN_URL || ocs`, and `acs`
     // is this string — so the old `admin.test.mirofish.ai` is now a branch the
     // app can never reach. Both still answer /auth/refresh identically, and a

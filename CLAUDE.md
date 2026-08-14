@@ -48,6 +48,34 @@ Token extraction lives only in `src/usage/tokens.ts`. Anthropic reports
 copies of this rule had drifted into undercounting real traffic by five orders of
 magnitude — don't add a fourth.
 
+## Hosts
+
+`mirofish.ai` is being retired for `mirasim.ai`, one service at a time, and the
+app is the only announcement — read the constants out of a payload rather than
+guessing. As of app 0.0.182 (2026-08-13):
+
+```
+relay   https://relay.mirasim.ai      was mirasim-relay.mirofish.ai until 0.0.173
+login   https://auth.mirasim.ai       was admin.test.mirofish.ai   until 0.0.150
+CDN     cdn-assets.mirasim.ai         the manifest still lives on the old host
+```
+
+Each moved host still answers on both names for a while, so a migration is never
+urgent — and never a fix. The old and new relay share **one** quota pool: during
+the August outage both returned the same `credit_exhausted_shared`, with the same
+accounts and the same device tickets. Switching hosts to escape a quota error is
+wasted work.
+
+Get the current constants from the release manifest, which needs no credentials:
+
+```sh
+curl -s https://cdn-assets.mirofish.ai/mirasim/releases/latest.json | jq '{version, payload}'
+```
+
+Hot updates cannot cross a shell ABI gap (`minShellAbi`/`maxShellAbi` in
+`payload.json`) — the installed shell is ABI 23, and 0.0.170+ needs 33, which is
+why `~/.mirasim/app/` stops at 0.0.150 while the manifest races ahead.
+
 ## Working against the live relay
 
 Every failed upstream call cools an account (8s doubling, capped at `cooldownMs`),
