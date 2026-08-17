@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { serve } from "@hono/node-server";
+import { checkReachability } from "../accounts/reachability.js";
 import { accountStore } from "../accounts/store.js";
 import { type AppConfig, loadConfigFromDisk } from "../config/index.js";
 import { identityFromPem } from "../crypto/device.js";
@@ -136,6 +137,30 @@ async function cmdAccountsExercise(cfg: AppConfig, flags: Record<string, string 
       .join("\n---\n\n"),
   );
   log(`output written to ${outFile}`);
+}
+
+/**
+ * Report, per account, whether the relay will serve it — and say so in the exit
+ * code so a scheduler can watch without parsing anything: 0 once any account is
+ * served, 1 while none is.
+ */
+async function cmdAccountsCheck(cfg: AppConfig) {
+  const rt = buildRuntime(cfg);
+  const rows = await checkReachability(
+    rt.pool,
+    rt.store.list().map((a) => a.id),
+  );
+  for (const r of rows)
+    log(
+      r.state === "ok"
+        ? `${r.accountId}\tok\t${r.models} models`
+        : r.state === "exhausted"
+          ? `${r.accountId}\texhausted\tHTTP ${r.status}`
+          : `${r.accountId}\terror\tHTTP ${r.status} ${r.detail}`,
+    );
+  const served = rows.filter((r) => r.state === "ok").length;
+  log(`\n${served}/${rows.length} accounts served`);
+  process.exit(served > 0 ? 0 : 1);
 }
 
 async function cmdModelsProbe(cfg: AppConfig) {
@@ -283,6 +308,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (_[1] === "list") return cmdAccountsList(cfg);
       if (_[1] === "remove") return cmdAccountsRemove(cfg, _[2]!);
       if (_[1] === "exercise") return cmdAccountsExercise(cfg, flags);
+      if (_[1] === "check") return cmdAccountsCheck(cfg);
       break;
     case "keys":
       if (_[1] === "mint") return cmdKeysMint(cfg, flags);
@@ -299,7 +325,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       break;
   }
   log(
-    "usage: mirasim-gateway <serve|migrate|accounts (import|add|list|remove|exercise)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
+    "usage: mirasim-gateway <serve|migrate|accounts (import|add|list|remove|exercise|check)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
   );
   process.exit(1);
 }
