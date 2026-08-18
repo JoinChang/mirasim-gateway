@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { serve } from "@hono/node-server";
+import { fetchLimits } from "../accounts/limits.js";
 import { checkReachability } from "../accounts/reachability.js";
 import { accountStore } from "../accounts/store.js";
 import { type AppConfig, loadConfigFromDisk } from "../config/index.js";
@@ -163,6 +164,42 @@ async function cmdAccountsCheck(cfg: AppConfig) {
   process.exit(served > 0 ? 0 : 1);
 }
 
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+async function cmdAccountsLimits(cfg: AppConfig) {
+  const rt = buildRuntime(cfg);
+  const accounts = rt.store.list();
+  const label = new Map(accounts.map((a) => [a.id, a.email ?? a.id]));
+  const rows = await fetchLimits(
+    rt.pool,
+    accounts.map((a) => a.id),
+  );
+
+  let ok = 0;
+  for (const r of rows) {
+    if (r.state !== "ok") {
+      log(`${label.get(r.accountId)}\terror\tHTTP ${r.status} ${r.detail}`);
+      continue;
+    }
+    ok++;
+    const marks = [r.suspended ? "suspended" : "", r.degraded ? "degraded" : "", r.unmetered ? "unmetered" : ""]
+      .filter(Boolean)
+      .join(",");
+    log(`${label.get(r.accountId)}${marks ? `\t${marks}` : ""}`);
+    for (const w of r.windows) {
+      // A zero budget would divide by zero. The relay has not sent one, but the
+      // percentage is the reason to read this at all, so guard over printing NaN.
+      const pct = w.budgetCents > 0 ? `${((w.usedCents / w.budgetCents) * 100).toFixed(1)}%` : "?";
+      const left = money(Math.max(0, w.budgetCents - w.usedCents));
+      const reset = w.resetAt ? new Date(w.resetAt * 1000).toISOString().replace("T", " ").slice(0, 16) : "?";
+      log(
+        `  ${w.name.padEnd(4)} ${money(w.usedCents)} / ${money(w.budgetCents)}  ${pct} used  ${left} left  resets ${reset}`,
+      );
+    }
+  }
+  process.exit(ok > 0 ? 0 : 1);
+}
+
 async function cmdModelsProbe(cfg: AppConfig) {
   const rt = buildRuntime(cfg);
   const done = await rt.prober.runOnce();
@@ -309,6 +346,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (_[1] === "remove") return cmdAccountsRemove(cfg, _[2]!);
       if (_[1] === "exercise") return cmdAccountsExercise(cfg, flags);
       if (_[1] === "check") return cmdAccountsCheck(cfg);
+      if (_[1] === "limits") return cmdAccountsLimits(cfg);
       break;
     case "keys":
       if (_[1] === "mint") return cmdKeysMint(cfg, flags);
@@ -325,7 +363,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       break;
   }
   log(
-    "usage: mirasim-gateway <serve|migrate|accounts (import|add|list|remove|exercise|check)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
+    "usage: mirasim-gateway <serve|migrate|accounts (import|add|list|remove|exercise|check|limits)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
   );
   process.exit(1);
 }
