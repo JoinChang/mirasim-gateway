@@ -135,9 +135,14 @@ function renderChart(days: DailyTokens[], now: number): string {
     const t = byDay.get(day) ?? 0;
     values.push(t > 0 ? t : null);
   }
-  if (!values.some((v) => v !== null)) return "";
+  const seen = values.filter((v): v is number => v !== null);
+  if (!seen.length) return "";
 
-  const data = JSON.stringify({ labels, values });
+  // Bars on a log axis grow up from the axis floor, so a day sitting on that
+  // floor draws no bar at all. Dropping the floor a full decade below the
+  // quietest day gives it height to be seen without distorting the rest.
+  const decade = 10 ** Math.floor(Math.log10(Math.min(...seen)));
+  const data = JSON.stringify({ labels, values, min: decade / 10 });
   return `<section class="tr">
   <div class="trh"><h2>${ICON}Daily Usage</h2><span class="dim sm">via this gateway</span></div>
   <div class="chw"><canvas id="ch"></canvas></div>
@@ -162,7 +167,7 @@ callbacks:{title:function(i){return d.labels[i[0].dataIndex]},
 label:function(c){return fmt(c.parsed.y)+' tokens'}}}},
 scales:{x:{grid:{display:false},border:{color:line},
 ticks:{color:dim,font:{size:10},maxRotation:0,autoSkipPadding:8}},
-y:{type:'logarithmic',grid:{color:line},border:{display:false},
+y:{type:'logarithmic',min:d.min,grid:{color:line},border:{display:false},
 ticks:{color:dim,font:{size:10},maxTicksLimit:4,callback:function(v){return fmt(v)}}}}}})
 })()`;
 }
@@ -201,6 +206,7 @@ export function renderUsagePage(snap: UsageSnapshot, now = Date.now()): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='1.5' y='9' width='3' height='5.5' rx='1' fill='%233d7a5a'/%3E%3Crect x='6.5' y='5' width='3' height='9.5' rx='1' fill='%233d7a5a'/%3E%3Crect x='11.5' y='1.5' width='3' height='13' rx='1' fill='%233d7a5a'/%3E%3C/svg%3E">
 <title>Mirasim Usage</title>
 <style>
 :root{--bg:#fbfbfa;--fg:#1a1a18;--dim:#6b6b66;--line:#e5e4e0;--fill:#3d7a5a;--over:#b8763a;--card:#fff}
