@@ -146,9 +146,18 @@ export function createPool(opts: {
   async function execute(req: RelayRequest): Promise<{ response: Response; accountId: string }> {
     const cfg = opts.config;
     const deadline = Date.now() + cfg.maxWaitMs;
+    // Accounts this call has already found the relay unwilling to serve. Not a
+    // cooldown — they are not at fault and must be free to work on the next
+    // request — just "asked, and it said no", so the walk moves on instead of
+    // picking the same one again.
+    const refused = new Set<string>();
     const candidates = () =>
-      req.onlyAccount ? opts.store.list().filter((a) => a.id === req.onlyAccount) : opts.store.list();
+      (req.onlyAccount ? opts.store.list().filter((a) => a.id === req.onlyAccount) : opts.store.list()).filter(
+        (a) => !refused.has(a.id),
+      );
     let fiveXX = 0;
+    /** The relay's own words, kept so an all-refused pool answers in them. */
+    let refusal: { response: Response; accountId: string } | null = null;
     // What each attempt actually hit. Without this the fall-through can only
     // guess, and it guessed "throttled" for every one of them.
     const failures: AttemptFailure[] = [];
@@ -221,13 +230,27 @@ export function createPool(opts: {
       const outcome = classifyOutcome(resp.status, gh, { errorType: text ? relayErrorType(text) : undefined });
       if (req.model) opts.onOutcome?.(req.model, outcome);
 
-      // The relay's shared budget, not this account's. Every pooled account
-      // draws on the same pot, so cooling this one and walking to the next only
-      // repeats the rejection five times and leaves five healthy accounts
-      // looking failed. Hand back the relay's own answer instead.
+      // The relay's shared budget, not this account's — so the account is never
+      // cooled and never blamed for it.
+      //
+      // It used to end the call here too, on the reasoning that one pot means
+      // failing over cannot help. Restoration proved that wrong: the operator
+      // restores accounts a batch at a time, and on the first day of it one
+      // account was served while four were still refused. Walking on costs a
+      // round-trip; not walking on returns 429 while a working account sits
+      // untried.
       if (outcome.kind === "relay_exhausted") {
         opts.store.setFails(a.id, 0);
-        return { response: resp, accountId: a.id };
+        refused.add(a.id);
+        refusal = { response: resp, accountId: a.id };
+        failures.push({
+          accountId: a.id,
+          stage: "throttled",
+          status: resp.status,
+          ...ticketMissing,
+          ...(await said(resp, gh, text)),
+        });
+        continue;
       }
 
       // A model the relay has no deployment for is not an account problem. Cooling
@@ -268,6 +291,10 @@ export function createPool(opts: {
       opts.store.setFails(a.id, 0);
       return { response: resp, accountId: a.id };
     }
+    // When every account was refused for the relay's own reasons, answer in the
+    // relay's words rather than a summary of them: the message names the cause
+    // and `explainRelayError` is keyed on it.
+    if (refusal) return refusal;
     return { response: exhaustedResponse(failures, stop), accountId: "" };
   }
 
