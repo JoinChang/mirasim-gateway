@@ -207,76 +207,58 @@ describe("renderUsagePage", () => {
   });
 });
 
-describe("the traffic chart", () => {
+describe("the daily usage chart", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
   const base = { windows: [], serving: 1, total: 1, takenAt: now };
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
+  const series = (html: string) =>
+    JSON.parse(/var d=(\{.*?\}),cs=/s.exec(html)![1]!) as { labels: string[]; values: (number | null)[] };
 
-  it("draws one bar per day that saw traffic", () => {
-    const html = renderUsagePage(
-      {
-        ...base,
-        days: [
-          { day: day(0), tokens: 100 },
-          { day: day(3), tokens: 50 },
-        ],
-      },
-      now,
-    );
-    expect(html.match(/<rect /g)).toHaveLength(2);
+  it("plots a fixed 14-day span so the gaps keep their width", () => {
+    const { labels, values } = series(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now));
+    expect(labels).toHaveLength(14);
+    expect(values).toHaveLength(14);
+    expect(labels[13]).toBe(day(0));
+    expect(labels[0]).toBe(day(13));
   });
 
-  it("leaves quiet days empty instead of joining across them", () => {
-    // A line would draw a slope from day 13 to day 0 through eleven silent days.
-    const html = renderUsagePage(
-      {
-        ...base,
-        days: [
-          { day: day(13), tokens: 900 },
-          { day: day(0), tokens: 900 },
-        ],
-      },
-      now,
-    );
-    expect(html.match(/<rect /g)).toHaveLength(2);
-    expect(html).not.toContain("<polyline");
-    expect(html).not.toContain("<path");
+  it("leaves quiet days null rather than zero", () => {
+    // A logarithmic axis has nowhere to put zero, and a gap says "nothing
+    // happened" more plainly than a bar of no height.
+    const { values } = series(renderUsagePage({ ...base, days: [{ day: day(3), tokens: 50 }] }, now));
+    expect(values[10]).toBe(50);
+    expect(values.filter((v) => v !== null)).toHaveLength(1);
+    expect(values).not.toContain(0);
   });
 
-  it("keeps a quiet day visible next to a burst rather than flattening it away", () => {
+  it("compresses three orders of magnitude with a labelled log axis", () => {
     const html = renderUsagePage(
       {
         ...base,
         days: [
-          { day: day(0), tokens: 1 },
-          { day: day(1), tokens: 1_000_000 },
+          { day: day(0), tokens: 137_013 },
+          { day: day(1), tokens: 165_927_760 },
         ],
       },
       now,
     );
-    const heights = [...html.matchAll(/height="([\d.]+)"/g)].map((m) => Number(m[1]));
-    // Linear scaling would put the small day at 0.00003% of the tall one.
-    expect(Math.min(...heights)).toBeGreaterThanOrEqual(1.5);
+    expect(html).toContain("'logarithmic'");
   });
 
   it("drops the chart entirely when there is nothing to plot", () => {
-    expect(renderUsagePage({ ...base, days: [] }, now)).not.toContain("<svg");
-    expect(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 0 }] }, now)).not.toContain("<svg");
+    expect(renderUsagePage({ ...base, days: [] }, now)).not.toContain("<canvas");
+    expect(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 0 }] }, now)).not.toContain("<canvas");
+    expect(renderUsagePage({ ...base, days: [{ day: day(40), tokens: 999 }] }, now)).not.toContain("<canvas");
   });
 
-  it("ignores traffic older than the window it claims to show", () => {
-    const html = renderUsagePage({ ...base, days: [{ day: day(40), tokens: 999 }] }, now);
-    expect(html).not.toContain("<svg");
-  });
-
-  it("labels magnitudes rather than raw digits", () => {
-    const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 7_423_365 }] }, now);
-    expect(html).toContain("7.4M");
+  it("loads the chart library from us, not from a CDN", () => {
+    // The page is public: a CDN tag would send every visitor to a third party.
+    const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now);
+    expect(html).toContain('src="/usage/chart.js"');
+    expect(html).not.toMatch(/src="https?:/);
   });
 
   it("is not dressed as a fourth window card", () => {
-    // The windows are bounded and reset; traffic is unbounded history. Same
-    // chrome would claim they answer the same question.
     const html = renderUsagePage(
       {
         ...base,
@@ -287,16 +269,18 @@ describe("the traffic chart", () => {
       },
       now,
     );
-    // One card for the one window, and none for the chart.
     expect(html.match(/class="w"/g)).toHaveLength(1);
     expect(html).toContain('class="tr"');
-    expect(html.indexOf("<svg")).toBeGreaterThan(html.indexOf('class="tr"'));
   });
 
   it("says whose traffic it is, since the percentages above measure something else", () => {
-    // Percentages come from the relay's own limits; this comes from what passed
-    // through here. An account used directly elsewhere shows up in one, not both.
     const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now);
     expect(html).toContain("via this gateway");
+  });
+
+  it("carries no leftover caption now that the axes are labelled", () => {
+    const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now);
+    expect(html).not.toContain("peak ");
+    expect(html).toContain("Daily Usage");
   });
 });

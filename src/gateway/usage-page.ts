@@ -109,62 +109,62 @@ function paceFraction(name: string, resetAt: number, now: number): number | null
 
 const DAYS = 14;
 
+/** A bar-chart glyph, inline so the page still owes nothing to a third party. */
+const ICON = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="9" width="3" height="5.5" rx="1"/><rect x="6.5" y="5" width="3" height="9.5" rx="1"/><rect x="11.5" y="1.5" width="3" height="13" rx="1"/></svg>`;
+
 /**
- * Traffic through this gateway, by UTC day.
+ * Tokens per day, drawn by Chart.js on a logarithmic axis.
  *
- * Deliberately bars and not a line. Real traffic here is bursty — one heavy day
- * then nothing for a week — and a line drawn between two distant points invents
- * a slope across days that saw no requests at all. Bars leave the gaps visible.
+ * Log rather than linear because the spread here is three orders of magnitude —
+ * a 165M-token day next to a 137k one — and a linear axis flattens the smaller
+ * days into invisible slivers. Unlike a hand-rolled square-root scale the axis
+ * carries printed ticks, so the compression is visible rather than implied.
  *
- * A day×hour heatmap was the other candidate and does not fit this data: ten of
- * 240 cells carry any tokens, so it would render as a mostly empty grid.
+ * Quiet days are null, not zero: a log axis has no place to put zero, and a gap
+ * says "nothing happened" more plainly than a bar of no height. A day-by-hour
+ * heatmap was the other candidate and does not fit this data — ten of 240 cells
+ * carry any tokens, so it would read as broken rather than as quiet.
  */
 function renderChart(days: DailyTokens[], now: number): string {
-  if (!days.length) return "";
-  // Fill the quiet days back in. Their absence is the point: the gaps are what
-  // make a burst legible as a burst.
   const byDay = new Map(days.map((d) => [d.day, d.tokens]));
-  const series: DailyTokens[] = [];
+  const labels: string[] = [];
+  const values: (number | null)[] = [];
   for (let i = DAYS - 1; i >= 0; i--) {
     const day = new Date(now - i * 86400_000).toISOString().slice(0, 10);
-    series.push({ day, tokens: byDay.get(day) ?? 0 });
+    labels.push(day);
+    const t = byDay.get(day) ?? 0;
+    values.push(t > 0 ? t : null);
   }
-  const peak = Math.max(...series.map((d) => d.tokens));
-  if (peak <= 0) return "";
+  if (!values.some((v) => v !== null)) return "";
 
-  const W = 100;
-  const H = 32;
-  const gap = 1.2;
-  const bw = (W - gap * (series.length - 1)) / series.length;
-  const bars = series
-    .map((d, i) => {
-      // Square root, not linear: one burst day dwarfs the rest by two orders of
-      // magnitude, and on a linear scale every other day flattens into nothing.
-      const h = d.tokens > 0 ? Math.max(1.5, Math.sqrt(d.tokens / peak) * H) : 0;
-      if (h === 0) return "";
-      const x = i * (bw + gap);
-      return `<rect x="${x.toFixed(2)}" y="${(H - h).toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" rx="0.6"><title>${d.day}: ${fmtTokens(d.tokens)} tokens</title></rect>`;
-    })
-    .join("");
-
-  // Not a fourth `.w` card. The windows above are bounded — they have a
-  // denominator and they reset, and they answer "can I use this right now?".
-  // Traffic is unbounded history answering "what has been happening?". Giving
-  // the two the same chrome claims they are the same kind of fact.
+  const data = JSON.stringify({ labels, values });
   return `<section class="tr">
-  <div class="trh"><h2>Traffic</h2><span class="dim sm">via this gateway · ${DAYS}d</span></div>
-  <svg class="ch" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
-       aria-label="Daily token throughput over the last ${DAYS} days">${bars}</svg>
-  <p class="dim sm">${esc(series[0]!.day)} — ${esc(series[series.length - 1]!.day)} · peak ${fmtTokens(peak)} tokens/day</p>
+  <div class="trh"><h2>${ICON}Daily Usage</h2><span class="dim sm">via this gateway</span></div>
+  <div class="chw"><canvas id="ch"></canvas></div>
+  <script src="/usage/chart.js"></script>
+  <script>${chartScript(data)}</script>
 </section>`;
 }
 
-/** "1.2M", "7.4k" — the magnitude is the message, not the digits. */
-function fmtTokens(n: number): string {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
-  return String(n);
+/** Kept out of the markup above so the template stays readable. */
+function chartScript(data: string): string {
+  return `(function(){
+var d=${data},cs=getComputedStyle(document.documentElement);
+var fg=cs.getPropertyValue('--fg').trim(),dim=cs.getPropertyValue('--dim').trim();
+var line=cs.getPropertyValue('--line').trim(),fill=cs.getPropertyValue('--fill').trim();
+function fmt(n){return n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n)}
+new Chart(document.getElementById('ch'),{type:'bar',
+data:{labels:d.labels.map(function(s){return s.slice(5)}),
+datasets:[{data:d.values,backgroundColor:fill,borderRadius:2,borderSkipped:false}]},
+options:{responsive:true,maintainAspectRatio:false,animation:false,
+plugins:{legend:{display:false},tooltip:{displayColors:false,
+callbacks:{title:function(i){return d.labels[i[0].dataIndex]},
+label:function(c){return fmt(c.parsed.y)+' tokens'}}}},
+scales:{x:{grid:{display:false},border:{color:line},
+ticks:{color:dim,font:{size:10},maxRotation:0,autoSkipPadding:8}},
+y:{type:'logarithmic',grid:{color:line},border:{display:false},
+ticks:{color:dim,font:{size:10},maxTicksLimit:4,callback:function(v){return fmt(v)}}}}}})
+})()`;
 }
 
 /**
@@ -219,7 +219,8 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .bar u{position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;background:var(--fg);opacity:.45;transform:translateX(-1px)}
 .tr{margin:1.6rem .15rem 0;padding-top:1.15rem;border-top:1px solid var(--line)}
 .trh{display:flex;align-items:baseline;justify-content:space-between;gap:1rem}
-.ch{display:block;width:100%;height:3rem;margin:.8rem 0 .5rem;fill:var(--fill)}
+.chw{position:relative;height:8rem;margin:.9rem 0 .1rem}
+.ic{width:.8rem;height:.8rem;fill:currentColor;margin-right:.4rem;vertical-align:-.05rem}
 .dim{color:var(--dim)}
 .sm{font-size:.85rem;margin:0}
 </style>

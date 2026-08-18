@@ -14,6 +14,7 @@ import type { Metrics } from "../metrics/registry.js";
 import type { GatewayResult, SearchRow } from "../types/wire.js";
 import { HOP_BY_HOP } from "../upstream/relay.js";
 import type { Recorder } from "../usage/recorder.js";
+import { chartAsset } from "./chart-asset.js";
 import { explainRelayError } from "./relayErrors.js";
 import { meterStream } from "./streamUsage.js";
 import { createUsageSource, renderUsagePage } from "./usage-page.js";
@@ -185,6 +186,19 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     deps.pool,
     () => deps.store.list().map((a) => a.id),
     (sinceMs) => deps.usage.dailyTokens(sinceMs),
+  );
+
+  // Immutable: the filename is only ever bumped by a dependency upgrade, and the
+  // point of self-hosting is that a repeat visitor pays for it once.
+  app.get(
+    "/usage/chart.js",
+    () =>
+      new Response(chartAsset(), {
+        headers: {
+          "content-type": "text/javascript; charset=utf-8",
+          "cache-control": "public, max-age=31536000, immutable",
+        },
+      }),
   );
 
   app.get("/usage", async (c) => {
