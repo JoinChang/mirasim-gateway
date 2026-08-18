@@ -284,4 +284,20 @@ describe("the daily usage chart", () => {
     expect(html).toContain('rel="icon"');
     expect(html).toContain("data:image/svg+xml");
   });
+
+  it("heads both groups the same way, so neither looks like a stray", () => {
+    const html = renderUsagePage(
+      {
+        ...base,
+        windows: [
+          { name: "7d", usedCents: 1, budgetCents: 100, resetAt: 2_000_000_000, accounts: 1, staggered: false },
+        ],
+        days: [{ day: day(0), tokens: 100 }],
+      },
+      now,
+    );
+    expect(html.match(/class="sh"/g)).toHaveLength(2);
+    expect(html).toContain("Limits");
+    expect(html).toContain("Daily Usage");
+  });
 });

@@ -109,8 +109,11 @@ function paceFraction(name: string, resetAt: number, now: number): number | null
 
 const DAYS = 14;
 
+/** A gauge glyph for the bounded windows, echoing the bars inside their cards. */
+const ICON_LIMITS = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="6.5" width="14" height="3" rx="1.5" opacity=".3"/><rect x="1" y="6.5" width="6" height="3" rx="1.5"/></svg>`;
+
 /** A bar-chart glyph, inline so the page still owes nothing to a third party. */
-const ICON = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="9" width="3" height="5.5" rx="1"/><rect x="6.5" y="5" width="3" height="9.5" rx="1"/><rect x="11.5" y="1.5" width="3" height="13" rx="1"/></svg>`;
+const ICON_DAILY = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="9" width="3" height="5.5" rx="1"/><rect x="6.5" y="5" width="3" height="9.5" rx="1"/><rect x="11.5" y="1.5" width="3" height="13" rx="1"/></svg>`;
 
 /**
  * Tokens per day, drawn by Chart.js on a logarithmic axis.
@@ -142,7 +145,7 @@ function renderChart(days: DailyTokens[], now: number): string {
   // the chart is actually for.
   const data = JSON.stringify({ labels, values });
   return `<section class="tr">
-  <h2>${ICON}Daily Usage</h2>
+  <h3 class="sh">${ICON_DAILY}Daily Usage</h3>
   <div class="chw"><canvas id="ch"></canvas></div>
   <script src="/usage/chart.js"></script>
   <script>${chartScript(data)}</script>
@@ -210,24 +213,26 @@ export function renderUsagePage(snap: UsageSnapshot, now = Date.now()): string {
 :root{--bg:#fbfbfa;--fg:#1a1a18;--dim:#6b6b66;--line:#e5e4e0;--fill:#3d7a5a;--over:#b8763a;--card:#fff}
 @media(prefers-color-scheme:dark){:root{--bg:#161614;--fg:#eceae5;--dim:#95928a;--line:#2c2a26;--fill:#69ad86;--over:#d99a55;--card:#1e1d1a}}
 *{box-sizing:border-box}
-body{margin:0;padding:2rem 1.25rem 3rem;background:var(--bg);color:var(--fg);
+body{margin:0;padding:1.25rem 1.25rem 2.5rem;background:var(--bg);color:var(--fg);
  font:16px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
 main{max-width:34rem;margin:0 auto}
 .w{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.15rem;margin:0 0 .85rem}
 h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--dim)}
+.sh{display:flex;align-items:center;font-size:.85rem;font-weight:600;letter-spacing:.02em;margin:0 0 .7rem .15rem;color:var(--fg)}
 .pct{margin:.1rem 0 0;font-size:1.75rem;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
 .of{font-size:.85rem;font-weight:400;color:var(--dim)}
 .bar{position:relative;height:6px;border-radius:99px;background:var(--line);margin:.75rem 0 .8rem}
 .bar i{display:block;height:100%;background:var(--fill);border-radius:99px;transition:width .3s}
 .bar i.hot{background:var(--over)}
 .bar u{position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;background:var(--fg);opacity:.45;transform:translateX(-1px)}
-.tr{margin:1.6rem .15rem 0;padding-top:1.15rem;border-top:1px solid var(--line)}
+.tr{margin:1.5rem .15rem 0;padding-top:1.2rem;border-top:1px solid var(--line)}
 .chw{position:relative;height:8rem;margin:.9rem 0 .1rem}
 .ic{width:.8rem;height:.8rem;fill:currentColor;margin-right:.4rem;vertical-align:-.05rem}
 .dim{color:var(--dim)}
 .sm{font-size:.85rem;margin:0}
 </style>
 <main>
+  <h3 class="sh">${ICON_LIMITS}Limits</h3>
 ${rows || empty}
 ${renderChart(snap.days, now)}
 </main>`;
