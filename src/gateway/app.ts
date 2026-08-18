@@ -16,6 +16,7 @@ import { HOP_BY_HOP } from "../upstream/relay.js";
 import type { Recorder } from "../usage/recorder.js";
 import { explainRelayError } from "./relayErrors.js";
 import { meterStream } from "./streamUsage.js";
+import { createUsageSource, renderUsagePage } from "./usage-page.js";
 import { applyModelAlias, sha256Hex, utcDayStartMs } from "./util.js";
 
 type Vars = { key?: DownstreamKey; openMode?: boolean };
@@ -175,6 +176,20 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
       auth: deps.keys.count() > 0,
       accounts: accts.length,
       enabled: accts.filter((a) => a.disabledUntil <= now).length,
+    });
+  });
+
+  // Public, unauthenticated, and cached: see usage-page.ts for why the TTL is the
+  // thing that makes it safe to expose. Totals only — no account is named here.
+  const usage = createUsageSource(deps.pool, () => deps.store.list().map((a) => a.id));
+
+  app.get("/usage", async (c) => {
+    const snap = await usage.get();
+    if (/application\/json/.test(c.req.header("accept") ?? "") || /[?&]format=json/.test(c.req.url))
+      return c.json(snap);
+    return c.html(renderUsagePage(snap), 200, {
+      // A minute-old number is fine to reuse; a stale one for longer is not.
+      "cache-control": "public, max-age=30",
     });
   });
 
