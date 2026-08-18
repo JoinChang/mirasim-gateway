@@ -186,6 +186,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     deps.pool,
     () => deps.store.list().map((a) => a.id),
     (sinceMs) => deps.usage.dailyTokens(sinceMs),
+    (sinceMs) => deps.usage.modelTokens(sinceMs),
   );
 
   // Immutable: the filename is only ever bumped by a dependency upgrade, and the

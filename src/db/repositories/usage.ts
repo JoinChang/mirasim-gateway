@@ -25,6 +25,22 @@ export function usageRepo(db: DB) {
         .orderBy(sql`1`)
         .all();
     },
+    /**
+     * Tokens per model since sinceMs, heaviest first. Same exclusion as
+     * dailyTokens: rows carrying no tokens are probe traffic, not use.
+     */
+    modelTokens(sinceMs: number): { model: string; tokens: number }[] {
+      return db
+        .select({
+          model: usageEvents.model,
+          tokens: sql<number>`sum(${usageEvents.inputTokens} + ${usageEvents.outputTokens})`,
+        })
+        .from(usageEvents)
+        .where(and(gte(usageEvents.ts, sinceMs), sql`${usageEvents.inputTokens} + ${usageEvents.outputTokens} > 0`))
+        .groupBy(usageEvents.model)
+        .orderBy(sql`2 desc`)
+        .all();
+    },
     /** SUM(input+output) tokens for a downstream key since dayStartMs. */
     dailyTokensForKey(keyId: string, dayStartMs: number): number {
       const row = db

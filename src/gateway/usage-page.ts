@@ -8,11 +8,17 @@ export interface DailyTokens {
   tokens: number;
 }
 
+export interface ModelTokens {
+  model: string;
+  tokens: number;
+}
+
 export interface UsageSnapshot {
   windows: BudgetWindow[];
   serving: number;
   total: number;
   days: DailyTokens[];
+  models: ModelTokens[];
   takenAt: number;
 }
 
@@ -32,6 +38,7 @@ export function createUsageSource(
   pool: Pool,
   listAccountIds: () => string[],
   listDailyTokens: (sinceMs: number) => DailyTokens[] = () => [],
+  listModelTokens: (sinceMs: number) => ModelTokens[] = () => [],
   ttlMs = 60_000,
 ) {
   let cached: UsageSnapshot | null = null;
@@ -45,8 +52,10 @@ export function createUsageSource(
     const now = Date.now();
     // A day of margin past the window the chart draws, so the oldest bar is not
     // half-populated by a query boundary landing mid-day.
-    const days = listDailyTokens(now - (DAYS + 1) * 86400_000);
-    return { windows, serving: serving.length, total: ids.length, days, takenAt: now };
+    const since = now - (DAYS + 1) * 86400_000;
+    const days = listDailyTokens(since);
+    const models = listModelTokens(since);
+    return { windows, serving: serving.length, total: ids.length, days, models, takenAt: now };
   }
 
   return {
@@ -173,6 +182,54 @@ ticks:{color:dim,font:{size:10},maxTicksLimit:4,callback:function(v){return fmt(
 })()`;
 }
 
+const MODEL_ROWS = 5;
+
+/** A stacked-rows glyph for the per-model split. */
+const ICON_MODELS = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="2.5" width="14" height="2.6" rx="1.3"/><rect x="1" y="6.7" width="10" height="2.6" rx="1.3" opacity=".65"/><rect x="1" y="10.9" width="6" height="2.6" rx="1.3" opacity=".35"/></svg>`;
+
+/** "1.2M", "7.4k" — the magnitude is the message, not the digits. */
+function fmtTokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
+}
+
+/**
+ * Which models the tokens went to, over the same 14 days the chart covers, so
+ * the two sections describe one period rather than two.
+ *
+ * The tail is rolled into one row. The split here is lopsided — one model takes
+ * most of it and several take a rounding error — and a row per model would
+ * spend most of the section on entries that round to zero percent.
+ */
+function renderModels(models: ModelTokens[]): string {
+  const rows = models.filter((m) => m.tokens > 0);
+  if (!rows.length) return "";
+  const total = rows.reduce((sum, m) => sum + m.tokens, 0);
+
+  const shown = rows.slice(0, MODEL_ROWS);
+  const restTokens = rows.slice(MODEL_ROWS).reduce((sum, m) => sum + m.tokens, 0);
+  if (restTokens > 0) shown.push({ model: "Other", tokens: restTokens });
+
+  const items = shown
+    .map((m) => {
+      const pct = ((m.tokens / total) * 100).toFixed(1);
+      return `<li>
+    <div class="mr"><span class="mn">${esc(m.model || "unknown")}</span><span class="mt">${fmtTokens(m.tokens)}</span></div>
+    <div class="bar mb"><i style="width:${pct}%"></i></div>
+  </li>`;
+    })
+    .join("\n  ");
+
+  return `<section class="tr">
+  <h3 class="sh">${ICON_MODELS}Models</h3>
+  <ul class="ml">
+  ${items}
+  </ul>
+</section>`;
+}
+
 /**
  * The page is deliberately anonymous: totals only, never an account id, an email
  * or a per-account figure. It is served without a key, so everything on it is
@@ -228,6 +285,13 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .tr{margin:1.5rem .15rem 0;padding-top:1.2rem;border-top:1px solid var(--line)}
 .chw{position:relative;height:8rem;margin:.9rem 0 .1rem}
 .ic{width:.8rem;height:.8rem;fill:currentColor;margin-right:.4rem;vertical-align:-.05rem}
+.ml{list-style:none;margin:0;padding:0}
+.ml li{margin:0 0 .7rem}
+.ml li:last-child{margin-bottom:0}
+.mr{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;font-size:.85rem}
+.mn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mt{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
+.mb{height:4px;margin:.35rem 0 0}
 .dim{color:var(--dim)}
 .sm{font-size:.85rem;margin:0}
 </style>
@@ -235,5 +299,6 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
   <h3 class="sh">${ICON_LIMITS}Limits</h3>
 ${rows || empty}
 ${renderChart(snap.days, now)}
+${renderModels(snap.models)}
 </main>`;
 }

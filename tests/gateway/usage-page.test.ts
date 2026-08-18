@@ -16,6 +16,7 @@ describe("createUsageSource", () => {
       pool,
       () => ["a1"],
       () => [],
+      () => [],
       60_000,
     );
     const t = Date.now();
@@ -32,6 +33,7 @@ describe("createUsageSource", () => {
       pool,
       () => ["a1"],
       () => [],
+      () => [],
       1000,
     );
     const t = Date.now();
@@ -46,6 +48,7 @@ describe("createUsageSource", () => {
     const src = createUsageSource(
       pool,
       () => ["a1"],
+      () => [],
       () => [],
       60_000,
     );
@@ -85,6 +88,7 @@ describe("createUsageSource", () => {
         return ["a1"];
       },
       () => [],
+      () => [],
       1,
     );
     return src.get().then((first) => {
@@ -112,6 +116,7 @@ describe("renderUsagePage", () => {
     serving: 1,
     total: 5,
     days: [],
+    models: [],
     takenAt: Date.now(),
   };
 
@@ -138,7 +143,7 @@ describe("renderUsagePage", () => {
   });
 
   it("says so plainly when nothing is being served", () => {
-    expect(renderUsagePage({ windows: [], serving: 0, total: 5, days: [], takenAt: Date.now() })).toContain(
+    expect(renderUsagePage({ windows: [], serving: 0, total: 5, days: [], models: [], takenAt: Date.now() })).toContain(
       "No account is being served",
     );
   });
@@ -161,6 +166,7 @@ describe("renderUsagePage", () => {
         serving: 1,
         total: 1,
         days: [],
+        models: [],
         takenAt: now,
       },
       now,
@@ -185,6 +191,7 @@ describe("renderUsagePage", () => {
       serving: 1,
       total: 1,
       days: [],
+      models: [],
       takenAt: now,
     });
     expect(renderUsagePage(win(8000), now)).toContain('class="hot"'); // 80% used, 50% elapsed
@@ -199,6 +206,7 @@ describe("renderUsagePage", () => {
         serving: 1,
         total: 1,
         days: [],
+        models: [],
         takenAt: now,
       },
       now,
@@ -209,7 +217,7 @@ describe("renderUsagePage", () => {
 
 describe("the daily usage chart", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
-  const base = { windows: [], serving: 1, total: 1, takenAt: now };
+  const base = { windows: [], serving: 1, total: 1, models: [], takenAt: now };
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
   const series = (html: string) =>
     JSON.parse(/var d=(\{.*?\}),cs=/s.exec(html)![1]!) as { labels: string[]; values: (number | null)[] };
@@ -299,5 +307,48 @@ describe("the daily usage chart", () => {
     expect(html.match(/class="sh"/g)).toHaveLength(2);
     expect(html).toContain("Limits");
     expect(html).toContain("Daily Usage");
+  });
+});
+
+describe("the model list", () => {
+  const now = Date.parse("2026-08-18T12:00:00Z");
+  const base = { windows: [], serving: 1, total: 1, days: [], takenAt: now };
+  const m = (model: string, tokens: number) => ({ model, tokens });
+
+  it("orders by weight and shows magnitudes", () => {
+    const html = renderUsagePage({ ...base, models: [m("opus", 150_932_228), m("sonnet", 22_504_288)] }, now);
+    expect(html.indexOf("opus")).toBeLessThan(html.indexOf("sonnet"));
+    expect(html).toContain("150.9M");
+    expect(html).toContain("22.5M");
+  });
+
+  it("sizes each bar by share of the total", () => {
+    const html = renderUsagePage({ ...base, models: [m("a", 750), m("b", 250)] }, now);
+    expect(html).toContain("width:75.0%");
+    expect(html).toContain("width:25.0%");
+  });
+
+  it("rolls the tail into one row rather than spending the section on zeroes", () => {
+    // Real data: one model takes 87% and several take a rounding error.
+    const models = [m("a", 1_000_000), m("b", 100_000), m("c", 900), m("d", 80), m("e", 7), m("f", 3), m("g", 1)];
+    const html = renderUsagePage({ ...base, models }, now);
+    expect(html.match(/<li>/g)).toHaveLength(6);
+    expect(html).toContain("Other");
+    expect(html).not.toContain(">g<");
+  });
+
+  it("leaves the tail row off when nothing is left over", () => {
+    const html = renderUsagePage({ ...base, models: [m("a", 10), m("b", 5)] }, now);
+    expect(html.match(/<li>/g)).toHaveLength(2);
+    expect(html).not.toContain("Other");
+  });
+
+  it("names an empty model rather than printing a blank row", () => {
+    expect(renderUsagePage({ ...base, models: [m("", 10)] }, now)).toContain("unknown");
+  });
+
+  it("disappears when nothing has been used", () => {
+    expect(renderUsagePage({ ...base, models: [] }, now)).not.toContain("Models");
+    expect(renderUsagePage({ ...base, models: [m("a", 0)] }, now)).not.toContain("Models");
   });
 });
