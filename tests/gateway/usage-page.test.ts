@@ -273,4 +273,30 @@ describe("the traffic chart", () => {
     const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 7_423_365 }] }, now);
     expect(html).toContain("7.4M");
   });
+
+  it("is not dressed as a fourth window card", () => {
+    // The windows are bounded and reset; traffic is unbounded history. Same
+    // chrome would claim they answer the same question.
+    const html = renderUsagePage(
+      {
+        ...base,
+        windows: [
+          { name: "7d", usedCents: 1, budgetCents: 100, resetAt: 2_000_000_000, accounts: 1, staggered: false },
+        ],
+        days: [{ day: day(0), tokens: 100 }],
+      },
+      now,
+    );
+    // One card for the one window, and none for the chart.
+    expect(html.match(/class="w"/g)).toHaveLength(1);
+    expect(html).toContain('class="tr"');
+    expect(html.indexOf("<svg")).toBeGreaterThan(html.indexOf('class="tr"'));
+  });
+
+  it("says whose traffic it is, since the percentages above measure something else", () => {
+    // Percentages come from the relay's own limits; this comes from what passed
+    // through here. An account used directly elsewhere shows up in one, not both.
+    const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now);
+    expect(html).toContain("via this gateway");
+  });
 });

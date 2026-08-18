@@ -147,8 +147,12 @@ function renderChart(days: DailyTokens[], now: number): string {
     })
     .join("");
 
-  return `<section class="w">
-  <h2>Traffic · ${DAYS}d</h2>
+  // Not a fourth `.w` card. The windows above are bounded — they have a
+  // denominator and they reset, and they answer "can I use this right now?".
+  // Traffic is unbounded history answering "what has been happening?". Giving
+  // the two the same chrome claims they are the same kind of fact.
+  return `<section class="tr">
+  <div class="trh"><h2>Traffic</h2><span class="dim sm">via this gateway · ${DAYS}d</span></div>
   <svg class="ch" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
        aria-label="Daily token throughput over the last ${DAYS} days">${bars}</svg>
   <p class="dim sm">${esc(series[0]!.day)} — ${esc(series[series.length - 1]!.day)} · peak ${fmtTokens(peak)} tokens/day</p>
@@ -213,7 +217,9 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .bar i{display:block;height:100%;background:var(--fill);border-radius:99px;transition:width .3s}
 .bar i.hot{background:var(--over)}
 .bar u{position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;background:var(--fg);opacity:.45;transform:translateX(-1px)}
-.ch{display:block;width:100%;height:2.4rem;margin:.75rem 0 .55rem;fill:var(--fill)}
+.tr{margin:1.6rem .15rem 0;padding-top:1.15rem;border-top:1px solid var(--line)}
+.trh{display:flex;align-items:baseline;justify-content:space-between;gap:1rem}
+.ch{display:block;width:100%;height:3rem;margin:.8rem 0 .5rem;fill:var(--fill)}
 .dim{color:var(--dim)}
 .sm{font-size:.85rem;margin:0}
 </style>
