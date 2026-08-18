@@ -135,16 +135,14 @@ function renderChart(days: DailyTokens[], now: number): string {
     const t = byDay.get(day) ?? 0;
     values.push(t > 0 ? t : null);
   }
-  const seen = values.filter((v): v is number => v !== null);
-  if (!seen.length) return "";
+  if (!values.some((v) => v !== null)) return "";
 
-  // Bars on a log axis grow up from the axis floor, so a day sitting on that
-  // floor draws no bar at all. Dropping the floor a full decade below the
-  // quietest day gives it height to be seen without distorting the rest.
-  const decade = 10 ** Math.floor(Math.log10(Math.min(...seen)));
-  const data = JSON.stringify({ labels, values, min: decade / 10 });
+  // No explicit floor. Dropping it a decade gave the quietest day a taller bar
+  // but flattened the difference between the loud ones, which is the comparison
+  // the chart is actually for.
+  const data = JSON.stringify({ labels, values });
   return `<section class="tr">
-  <div class="trh"><h2>${ICON}Daily Usage</h2><span class="dim sm">via this gateway</span></div>
+  <h2>${ICON}Daily Usage</h2>
   <div class="chw"><canvas id="ch"></canvas></div>
   <script src="/usage/chart.js"></script>
   <script>${chartScript(data)}</script>
@@ -167,7 +165,7 @@ callbacks:{title:function(i){return d.labels[i[0].dataIndex]},
 label:function(c){return fmt(c.parsed.y)+' tokens'}}}},
 scales:{x:{grid:{display:false},border:{color:line},
 ticks:{color:dim,font:{size:10},maxRotation:0,autoSkipPadding:8}},
-y:{type:'logarithmic',min:d.min,grid:{color:line},border:{display:false},
+y:{type:'logarithmic',grid:{color:line},border:{display:false},
 ticks:{color:dim,font:{size:10},maxTicksLimit:4,callback:function(v){return fmt(v)}}}}}})
 })()`;
 }
@@ -224,7 +222,6 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .bar i.hot{background:var(--over)}
 .bar u{position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;background:var(--fg);opacity:.45;transform:translateX(-1px)}
 .tr{margin:1.6rem .15rem 0;padding-top:1.15rem;border-top:1px solid var(--line)}
-.trh{display:flex;align-items:baseline;justify-content:space-between;gap:1rem}
 .chw{position:relative;height:8rem;margin:.9rem 0 .1rem}
 .ic{width:.8rem;height:.8rem;fill:currentColor;margin-right:.4rem;vertical-align:-.05rem}
 .dim{color:var(--dim)}

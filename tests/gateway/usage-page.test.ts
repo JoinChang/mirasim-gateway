@@ -212,11 +212,7 @@ describe("the daily usage chart", () => {
   const base = { windows: [], serving: 1, total: 1, takenAt: now };
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
   const series = (html: string) =>
-    JSON.parse(/var d=(\{.*?\}),cs=/s.exec(html)![1]!) as {
-      labels: string[];
-      values: (number | null)[];
-      min: number;
-    };
+    JSON.parse(/var d=(\{.*?\}),cs=/s.exec(html)![1]!) as { labels: string[]; values: (number | null)[] };
 
   it("plots a fixed 14-day span so the gaps keep their width", () => {
     const { labels, values } = series(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now));
@@ -277,33 +273,10 @@ describe("the daily usage chart", () => {
     expect(html).toContain('class="tr"');
   });
 
-  it("says whose traffic it is, since the percentages above measure something else", () => {
-    const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now);
-    expect(html).toContain("via this gateway");
-  });
-
   it("carries no leftover caption now that the axes are labelled", () => {
     const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, now);
     expect(html).not.toContain("peak ");
     expect(html).toContain("Daily Usage");
-  });
-
-  it("drops the axis floor below the quietest day so its bar still has height", () => {
-    // Bars on a log axis grow from the floor: a day sitting on it draws nothing.
-    const { min } = series(
-      renderUsagePage(
-        {
-          ...base,
-          days: [
-            { day: day(0), tokens: 137_013 },
-            { day: day(1), tokens: 165_927_760 },
-          ],
-        },
-        now,
-      ),
-    );
-    expect(min).toBe(10_000);
-    expect(min).toBeLessThan(137_013);
   });
 
   it("asks for no favicon the server does not have", () => {
