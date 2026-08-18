@@ -181,7 +181,11 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
 
   // Public, unauthenticated, and cached: see usage-page.ts for why the TTL is the
   // thing that makes it safe to expose. Totals only — no account is named here.
-  const usage = createUsageSource(deps.pool, () => deps.store.list().map((a) => a.id));
+  const usage = createUsageSource(
+    deps.pool,
+    () => deps.store.list().map((a) => a.id),
+    (sinceMs) => deps.usage.dailyTokens(sinceMs),
+  );
 
   app.get("/usage", async (c) => {
     const snap = await usage.get();

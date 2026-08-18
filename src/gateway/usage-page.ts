@@ -3,10 +3,16 @@ import { fetchLimits } from "../accounts/limits.js";
 import type { Pool } from "../accounts/pool.js";
 import { checkReachability } from "../accounts/reachability.js";
 
+export interface DailyTokens {
+  day: string;
+  tokens: number;
+}
+
 export interface UsageSnapshot {
   windows: BudgetWindow[];
   serving: number;
   total: number;
+  days: DailyTokens[];
   takenAt: number;
 }
 
@@ -22,7 +28,12 @@ export interface UsageSnapshot {
  * Refreshes are single-flighted for the same reason: ten simultaneous hits on a
  * cold cache must produce one round of upstream calls, not ten.
  */
-export function createUsageSource(pool: Pool, listAccountIds: () => string[], ttlMs = 60_000) {
+export function createUsageSource(
+  pool: Pool,
+  listAccountIds: () => string[],
+  listDailyTokens: (sinceMs: number) => DailyTokens[] = () => [],
+  ttlMs = 60_000,
+) {
   let cached: UsageSnapshot | null = null;
   let inFlight: Promise<UsageSnapshot> | null = null;
 
@@ -31,7 +42,11 @@ export function createUsageSource(pool: Pool, listAccountIds: () => string[], tt
     const reach = await checkReachability(pool, ids);
     const serving = reach.filter((r) => r.state === "ok").map((r) => r.accountId);
     const windows = serving.length ? summarize(await fetchLimits(pool, serving)) : [];
-    return { windows, serving: serving.length, total: ids.length, takenAt: Date.now() };
+    const now = Date.now();
+    // A day of margin past the window the chart draws, so the oldest bar is not
+    // half-populated by a query boundary landing mid-day.
+    const days = listDailyTokens(now - (DAYS + 1) * 86400_000);
+    return { windows, serving: serving.length, total: ids.length, days, takenAt: now };
   }
 
   return {
@@ -84,11 +99,68 @@ function windowSeconds(name: string): number | null {
  * percentage alone cannot, because 40% used is early in one window and late in
  * another.
  */
-function paceFraction(name: string, resetAt: number | null, now: number): number | null {
+function paceFraction(name: string, resetAt: number, now: number): number | null {
   const len = windowSeconds(name);
+  // resetAt is 0 when no contributor reported one — see summarize().
   if (!len || !resetAt) return null;
   const remaining = resetAt - now / 1000;
   return Math.max(0, Math.min(1, (len - remaining) / len));
+}
+
+const DAYS = 14;
+
+/**
+ * Traffic through this gateway, by UTC day.
+ *
+ * Deliberately bars and not a line. Real traffic here is bursty — one heavy day
+ * then nothing for a week — and a line drawn between two distant points invents
+ * a slope across days that saw no requests at all. Bars leave the gaps visible.
+ *
+ * A day×hour heatmap was the other candidate and does not fit this data: ten of
+ * 240 cells carry any tokens, so it would render as a mostly empty grid.
+ */
+function renderChart(days: DailyTokens[], now: number): string {
+  if (!days.length) return "";
+  // Fill the quiet days back in. Their absence is the point: the gaps are what
+  // make a burst legible as a burst.
+  const byDay = new Map(days.map((d) => [d.day, d.tokens]));
+  const series: DailyTokens[] = [];
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const day = new Date(now - i * 86400_000).toISOString().slice(0, 10);
+    series.push({ day, tokens: byDay.get(day) ?? 0 });
+  }
+  const peak = Math.max(...series.map((d) => d.tokens));
+  if (peak <= 0) return "";
+
+  const W = 100;
+  const H = 32;
+  const gap = 1.2;
+  const bw = (W - gap * (series.length - 1)) / series.length;
+  const bars = series
+    .map((d, i) => {
+      // Square root, not linear: one burst day dwarfs the rest by two orders of
+      // magnitude, and on a linear scale every other day flattens into nothing.
+      const h = d.tokens > 0 ? Math.max(1.5, Math.sqrt(d.tokens / peak) * H) : 0;
+      if (h === 0) return "";
+      const x = i * (bw + gap);
+      return `<rect x="${x.toFixed(2)}" y="${(H - h).toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" rx="0.6"><title>${d.day}: ${fmtTokens(d.tokens)} tokens</title></rect>`;
+    })
+    .join("");
+
+  return `<section class="w">
+  <h2>Traffic · ${DAYS}d</h2>
+  <svg class="ch" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+       aria-label="Daily token throughput over the last ${DAYS} days">${bars}</svg>
+  <p class="dim sm">${esc(series[0]!.day)} — ${esc(series[series.length - 1]!.day)} · peak ${fmtTokens(peak)} tokens/day</p>
+</section>`;
+}
+
+/** "1.2M", "7.4k" — the magnitude is the message, not the digits. */
+function fmtTokens(n: number): string {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
+  return String(n);
 }
 
 /**
@@ -141,10 +213,12 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .bar i{display:block;height:100%;background:var(--fill);border-radius:99px;transition:width .3s}
 .bar i.hot{background:var(--over)}
 .bar u{position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;background:var(--fg);opacity:.45;transform:translateX(-1px)}
+.ch{display:block;width:100%;height:2.4rem;margin:.75rem 0 .55rem;fill:var(--fill)}
 .dim{color:var(--dim)}
 .sm{font-size:.85rem;margin:0}
 </style>
 <main>
 ${rows || empty}
+${renderChart(snap.days, now)}
 </main>`;
 }

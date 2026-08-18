@@ -12,7 +12,12 @@ const respond = (req: { pathname: string }) => (req.pathname === "/v1/models" ? 
 describe("createUsageSource", () => {
   it("caches, so a page nobody has to authenticate for cannot be turned into relay load", async () => {
     const { pool, requests } = fakePool({ respond });
-    const src = createUsageSource(pool, () => ["a1"], 60_000);
+    const src = createUsageSource(
+      pool,
+      () => ["a1"],
+      () => [],
+      60_000,
+    );
     const t = Date.now();
     await src.get(t);
     const afterFirst = requests.length;
@@ -23,7 +28,12 @@ describe("createUsageSource", () => {
 
   it("refreshes once the TTL is past", async () => {
     const { pool, requests } = fakePool({ respond });
-    const src = createUsageSource(pool, () => ["a1"], 1000);
+    const src = createUsageSource(
+      pool,
+      () => ["a1"],
+      () => [],
+      1000,
+    );
     const t = Date.now();
     await src.get(t);
     const afterFirst = requests.length;
@@ -33,7 +43,12 @@ describe("createUsageSource", () => {
 
   it("single-flights a cold cache: ten hits at once are one round upstream", async () => {
     const { pool, requests } = fakePool({ respond });
-    const src = createUsageSource(pool, () => ["a1"], 60_000);
+    const src = createUsageSource(
+      pool,
+      () => ["a1"],
+      () => [],
+      60_000,
+    );
     const t = Date.now();
     await Promise.all(Array.from({ length: 10 }, () => src.get(t)));
     // Two calls for one account — /v1/models then /v1/limits — not twenty.
@@ -69,6 +84,7 @@ describe("createUsageSource", () => {
         if (broken) throw new Error("store unavailable");
         return ["a1"];
       },
+      () => [],
       1,
     );
     return src.get().then((first) => {
@@ -95,6 +111,7 @@ describe("renderUsagePage", () => {
     ],
     serving: 1,
     total: 5,
+    days: [],
     takenAt: Date.now(),
   };
 
@@ -121,7 +138,7 @@ describe("renderUsagePage", () => {
   });
 
   it("says so plainly when nothing is being served", () => {
-    expect(renderUsagePage({ windows: [], serving: 0, total: 5, takenAt: Date.now() })).toContain(
+    expect(renderUsagePage({ windows: [], serving: 0, total: 5, days: [], takenAt: Date.now() })).toContain(
       "No account is being served",
     );
   });
@@ -143,6 +160,7 @@ describe("renderUsagePage", () => {
         ],
         serving: 1,
         total: 1,
+        days: [],
         takenAt: now,
       },
       now,
@@ -166,6 +184,7 @@ describe("renderUsagePage", () => {
       ],
       serving: 1,
       total: 1,
+      days: [],
       takenAt: now,
     });
     expect(renderUsagePage(win(8000), now)).toContain('class="hot"'); // 80% used, 50% elapsed
@@ -176,13 +195,82 @@ describe("renderUsagePage", () => {
     const now = Date.now();
     const html = renderUsagePage(
       {
-        windows: [{ name: "lifetime", usedCents: 1, budgetCents: 10, resetAt: null, accounts: 1, staggered: false }],
+        windows: [{ name: "lifetime", usedCents: 1, budgetCents: 10, resetAt: 0, accounts: 1, staggered: false }],
         serving: 1,
         total: 1,
+        days: [],
         takenAt: now,
       },
       now,
     );
     expect(html).not.toContain("even pace");
+  });
+});
+
+describe("the traffic chart", () => {
+  const now = Date.parse("2026-08-18T12:00:00Z");
+  const base = { windows: [], serving: 1, total: 1, takenAt: now };
+  const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
+
+  it("draws one bar per day that saw traffic", () => {
+    const html = renderUsagePage(
+      {
+        ...base,
+        days: [
+          { day: day(0), tokens: 100 },
+          { day: day(3), tokens: 50 },
+        ],
+      },
+      now,
+    );
+    expect(html.match(/<rect /g)).toHaveLength(2);
+  });
+
+  it("leaves quiet days empty instead of joining across them", () => {
+    // A line would draw a slope from day 13 to day 0 through eleven silent days.
+    const html = renderUsagePage(
+      {
+        ...base,
+        days: [
+          { day: day(13), tokens: 900 },
+          { day: day(0), tokens: 900 },
+        ],
+      },
+      now,
+    );
+    expect(html.match(/<rect /g)).toHaveLength(2);
+    expect(html).not.toContain("<polyline");
+    expect(html).not.toContain("<path");
+  });
+
+  it("keeps a quiet day visible next to a burst rather than flattening it away", () => {
+    const html = renderUsagePage(
+      {
+        ...base,
+        days: [
+          { day: day(0), tokens: 1 },
+          { day: day(1), tokens: 1_000_000 },
+        ],
+      },
+      now,
+    );
+    const heights = [...html.matchAll(/height="([\d.]+)"/g)].map((m) => Number(m[1]));
+    // Linear scaling would put the small day at 0.00003% of the tall one.
+    expect(Math.min(...heights)).toBeGreaterThanOrEqual(1.5);
+  });
+
+  it("drops the chart entirely when there is nothing to plot", () => {
+    expect(renderUsagePage({ ...base, days: [] }, now)).not.toContain("<svg");
+    expect(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 0 }] }, now)).not.toContain("<svg");
+  });
+
+  it("ignores traffic older than the window it claims to show", () => {
+    const html = renderUsagePage({ ...base, days: [{ day: day(40), tokens: 999 }] }, now);
+    expect(html).not.toContain("<svg");
+  });
+
+  it("labels magnitudes rather than raw digits", () => {
+    const html = renderUsagePage({ ...base, days: [{ day: day(0), tokens: 7_423_365 }] }, now);
+    expect(html).toContain("7.4M");
   });
 });
