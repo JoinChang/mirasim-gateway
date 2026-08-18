@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { serve } from "@hono/node-server";
+import { summarize } from "../accounts/budget.js";
 import { fetchLimits } from "../accounts/limits.js";
 import { checkReachability } from "../accounts/reachability.js";
 import { accountStore } from "../accounts/store.js";
@@ -200,6 +201,76 @@ async function cmdAccountsLimits(cfg: AppConfig) {
   process.exit(ok > 0 ? 0 : 1);
 }
 
+const WINDOW_LABEL: Record<string, string> = {
+  "5h": "Current session",
+  "7d": "This week",
+  "30d": "This month",
+};
+
+/** "3h 52m", "5d 23h" — two units is enough to plan around, more is noise. */
+function until(epochSeconds: number, now = Date.now()): string {
+  const ms = epochSeconds * 1000 - now;
+  if (ms <= 0) return "any moment";
+  const m = Math.floor(ms / 60000);
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
+}
+
+function bar(fraction: number, width = 24): string {
+  const filled = Math.min(width, Math.max(0, Math.round(fraction * width)));
+  return "█".repeat(filled) + "░".repeat(width - filled);
+}
+
+async function cmdUsage(cfg: AppConfig) {
+  const rt = buildRuntime(cfg);
+  const all = rt.store.list();
+
+  // Ask who can serve before asking how much is left: an account the relay is
+  // refusing has budget that cannot be spent, and adding it in would report
+  // headroom nobody can use.
+  const reach = await checkReachability(
+    rt.pool,
+    all.map((a) => a.id),
+  );
+  const serving = reach.filter((r) => r.state === "ok").map((r) => r.accountId);
+  const refused = reach.length - serving.length;
+
+  if (serving.length === 0) {
+    log("no account is being served right now — nothing to total up");
+    for (const r of reach) if (r.state !== "ok") log(`  ${r.accountId}\t${r.state}\tHTTP ${r.status}`);
+    process.exit(1);
+  }
+
+  const windows = summarize(await fetchLimits(rt.pool, serving));
+  const now = Date.now();
+
+  log("");
+  for (const w of windows) {
+    const frac = w.budgetCents > 0 ? w.usedCents / w.budgetCents : 0;
+    const label = WINDOW_LABEL[w.name] ?? w.name;
+    log(`${label.padEnd(16)} ${bar(frac)}  ${(frac * 100).toFixed(1).padStart(5)}%`);
+    log(
+      `${" ".repeat(16)} $${(w.usedCents / 100).toFixed(2)} of $${(w.budgetCents / 100).toFixed(2)}` +
+        `  ·  $${(Math.max(0, w.budgetCents - w.usedCents) / 100).toFixed(2)} left`,
+    );
+    if (w.resetAt) {
+      const when = new Date(w.resetAt * 1000).toISOString().replace("T", " ").slice(0, 16);
+      // Staggered windows reset one account at a time, so the first timestamp is
+      // when *some* capacity returns, not all of it.
+      log(`${" ".repeat(16)} resets in ${until(w.resetAt, now)} (${when})${w.staggered ? ", first of several" : ""}`);
+    }
+    log("");
+  }
+
+  log(
+    `${serving.length} of ${all.length} accounts serving` +
+      (refused > 0 ? ` · ${refused} refused by the relay and left out of the totals` : ""),
+  );
+  process.exit(0);
+}
+
 async function cmdModelsProbe(cfg: AppConfig) {
   const rt = buildRuntime(cfg);
   const done = await rt.prober.runOnce();
@@ -339,6 +410,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       log("migrations applied");
       return;
     }
+    case "usage":
+      return cmdUsage(cfg);
     case "accounts":
       if (_[1] === "import") return cmdAccountsImport(cfg, flags);
       if (_[1] === "add") return cmdAccountsAdd(cfg, flags);
@@ -363,7 +436,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       break;
   }
   log(
-    "usage: mirasim-gateway <serve|migrate|accounts (import|add|list|remove|exercise|check|limits)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
+    "usage: mirasim-gateway <serve|migrate|usage|accounts (import|add|list|remove|exercise|check|limits)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
   );
   process.exit(1);
 }
