@@ -55,19 +55,36 @@ describe("createUsageSource", () => {
     expect(snap.windows[0]?.accounts).toBe(1);
   });
 
-  it("serves the stale snapshot rather than a 500 when a refresh fails", async () => {
-    let fail = false;
-    const { pool } = fakePool({
-      respond: (req) => {
-        if (fail) throw new Error("relay down");
-        return respond(req);
+  it("serves the stale snapshot rather than a 500 when a refresh throws", () => {
+    // A relay that is merely down does not reach here: checkReachability turns
+    // per-account failures into non-ok states, so an outage renders the honest
+    // "nothing is being served" page. This is the path where the refresh itself
+    // breaks — the account list is unavailable — and a minute-old number still
+    // beats a 500.
+    let broken = false;
+    const { pool } = fakePool({ respond });
+    const src = createUsageSource(
+      pool,
+      () => {
+        if (broken) throw new Error("store unavailable");
+        return ["a1"];
       },
+      1,
+    );
+    return src.get().then((first) => {
+      broken = true;
+      return src.get(Date.now() + 10_000).then((second) => {
+        expect(second).toBe(first);
+      });
     });
-    const src = createUsageSource(pool, () => ["a1"], 1);
-    const first = await src.get();
-    fail = true;
-    const second = await src.get(Date.now() + 10_000);
-    expect(second.takenAt).toBe(first.takenAt);
+  });
+
+  it("propagates the failure when there is no snapshot to fall back on", async () => {
+    const { pool } = fakePool({ respond });
+    const src = createUsageSource(pool, () => {
+      throw new Error("store unavailable");
+    });
+    await expect(src.get()).rejects.toThrow("store unavailable");
   });
 });
 
@@ -81,10 +98,15 @@ describe("renderUsagePage", () => {
     takenAt: Date.now(),
   };
 
-  it("shows money left, which is the number people open it for", () => {
+  it("shows the percentage and no money at all", () => {
     const html = renderUsagePage(snap);
-    expect(html).toContain("$734.23");
-    expect(html).toContain("$745.60");
+    expect(html).toContain("1.5%");
+    expect(html).not.toMatch(/\$\d/);
+  });
+
+  it("has no page header or footer to frame the numbers", () => {
+    const html = renderUsagePage(snap);
+    expect(html).not.toMatch(/<h1|<footer|accounts serving|updated /);
   });
 
   it("names no account — the page is public and pool membership is not part of a spend figure", () => {
@@ -102,5 +124,65 @@ describe("renderUsagePage", () => {
     expect(renderUsagePage({ windows: [], serving: 0, total: 5, takenAt: Date.now() })).toContain(
       "No account is being served",
     );
+  });
+
+  it("puts the pace line where a constant burn would have reached by now", () => {
+    // 7d window, 3.5d left => half elapsed => the marker sits at 50%.
+    const now = Date.now();
+    const html = renderUsagePage(
+      {
+        windows: [
+          {
+            name: "7d",
+            usedCents: 1000,
+            budgetCents: 10_000,
+            resetAt: Math.floor(now / 1000) + 3.5 * 86400,
+            accounts: 1,
+            staggered: false,
+          },
+        ],
+        serving: 1,
+        total: 1,
+        takenAt: now,
+      },
+      now,
+    );
+    expect(html).toContain("even pace 50.0%");
+    expect(html).toContain("left:50.0%");
+  });
+
+  it("flags a window being burned faster than it refills", () => {
+    const now = Date.now();
+    const win = (usedCents: number) => ({
+      windows: [
+        {
+          name: "7d",
+          usedCents,
+          budgetCents: 10_000,
+          resetAt: Math.floor(now / 1000) + 3.5 * 86400,
+          accounts: 1,
+          staggered: false,
+        },
+      ],
+      serving: 1,
+      total: 1,
+      takenAt: now,
+    });
+    expect(renderUsagePage(win(8000), now)).toContain('class="hot"'); // 80% used, 50% elapsed
+    expect(renderUsagePage(win(2000), now)).not.toContain('class="hot"');
+  });
+
+  it("omits the pace line when the window length is not knowable", () => {
+    const now = Date.now();
+    const html = renderUsagePage(
+      {
+        windows: [{ name: "lifetime", usedCents: 1, budgetCents: 10, resetAt: null, accounts: 1, staggered: false }],
+        serving: 1,
+        total: 1,
+        takenAt: now,
+      },
+      now,
+    );
+    expect(html).not.toContain("even pace");
   });
 });

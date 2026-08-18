@@ -59,7 +59,6 @@ export function createUsageSource(pool: Pool, listAccountIds: () => string[], tt
 const LABEL: Record<string, string> = { "5h": "Current session", "7d": "This week", "30d": "This month" };
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
-const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
 /** "3h 47m", "5d 23h" — two units is enough to plan around. */
 function until(epochSeconds: number, now: number): string {
@@ -70,6 +69,26 @@ function until(epochSeconds: number, now: number): string {
   const h = Math.floor((m % 1440) / 60);
   if (d > 0) return `${d}d ${h}h`;
   return h > 0 ? `${h}h ${m % 60}m` : `${m}m`;
+}
+
+/** "5h"/"7d"/"30d" name its own length, which is what makes a pace line computable. */
+function windowSeconds(name: string): number | null {
+  const m = /^(\d+)([hd])$/.exec(name);
+  if (!m) return null;
+  return Number(m[1]) * (m[2] === "h" ? 3600 : 86400);
+}
+
+/**
+ * Where spending would sit right now if the window were burned at a constant
+ * rate. Drawn on the bar so a glance answers "am I ahead or behind?" — the
+ * percentage alone cannot, because 40% used is early in one window and late in
+ * another.
+ */
+function paceFraction(name: string, resetAt: number | null, now: number): number | null {
+  const len = windowSeconds(name);
+  if (!len || !resetAt) return null;
+  const remaining = resetAt - now / 1000;
+  return Math.max(0, Math.min(1, (len - remaining) / len));
 }
 
 /**
@@ -85,48 +104,47 @@ export function renderUsagePage(snap: UsageSnapshot, now = Date.now()): string {
       const reset = w.resetAt
         ? `resets in ${until(w.resetAt, now)}${w.staggered ? " (first of several)" : ""}`
         : "no reset reported";
+      const pace = paceFraction(w.name, w.resetAt, now);
+      const pacePct = pace === null ? null : (pace * 100).toFixed(1);
+      // Ahead of the line means spending faster than the window refills.
+      const ahead = pace !== null && frac > pace;
       return `<section class="w">
-  <div class="hd"><h2>${esc(LABEL[w.name] ?? w.name)}</h2><span class="pct">${pct}%</span></div>
-  <div class="bar"><i style="width:${pct}%"></i></div>
-  <p class="fig"><b>${money(Math.max(0, w.budgetCents - w.usedCents))}</b> left
-     <span class="dim">of ${money(w.budgetCents)}</span></p>
-  <p class="dim sm">${esc(reset)}</p>
+  <h2>${esc(LABEL[w.name] ?? w.name)}</h2>
+  <p class="pct">${pct}%<span class="of"> used</span></p>
+  <div class="bar"><i class="${ahead ? "hot" : ""}" style="width:${pct}%"></i>${
+    pacePct === null ? "" : `<u style="left:${pacePct}%" title="even pace: ${pacePct}%"></u>`
+  }</div>
+  <p class="dim sm">${esc(reset)}${pacePct === null ? "" : ` · even pace ${pacePct}%`}</p>
 </section>`;
     })
     .join("\n");
 
   const empty = `<section class="w"><p class="dim">No account is being served right now.</p></section>`;
-  const age = Math.round((now - snap.takenAt) / 1000);
 
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>mira usage</title>
+<title>Mirasim Usage</title>
 <style>
-:root{--bg:#fbfbfa;--fg:#1a1a18;--dim:#6b6b66;--line:#e5e4e0;--fill:#3d7a5a;--card:#fff}
-@media(prefers-color-scheme:dark){:root{--bg:#161614;--fg:#eceae5;--dim:#95928a;--line:#2c2a26;--fill:#69ad86;--card:#1e1d1a}}
+:root{--bg:#fbfbfa;--fg:#1a1a18;--dim:#6b6b66;--line:#e5e4e0;--fill:#3d7a5a;--over:#b8763a;--card:#fff}
+@media(prefers-color-scheme:dark){:root{--bg:#161614;--fg:#eceae5;--dim:#95928a;--line:#2c2a26;--fill:#69ad86;--over:#d99a55;--card:#1e1d1a}}
 *{box-sizing:border-box}
 body{margin:0;padding:2rem 1.25rem 3rem;background:var(--bg);color:var(--fg);
  font:16px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
 main{max-width:34rem;margin:0 auto}
-h1{font-size:1.05rem;font-weight:600;letter-spacing:.02em;margin:0 0 1.75rem;color:var(--dim)}
 .w{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.15rem;margin:0 0 .85rem}
-.hd{display:flex;align-items:baseline;justify-content:space-between;gap:1rem}
-h2{font-size:.95rem;font-weight:600;margin:0}
-.pct{font-variant-numeric:tabular-nums;font-size:.85rem;color:var(--dim)}
-.bar{height:6px;border-radius:99px;background:var(--line);overflow:hidden;margin:.7rem 0 .8rem}
+h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--dim)}
+.pct{margin:.1rem 0 0;font-size:1.75rem;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
+.of{font-size:.85rem;font-weight:400;color:var(--dim)}
+.bar{position:relative;height:6px;border-radius:99px;background:var(--line);margin:.75rem 0 .8rem}
 .bar i{display:block;height:100%;background:var(--fill);border-radius:99px;transition:width .3s}
-.fig{margin:0;font-size:1.02rem;font-variant-numeric:tabular-nums}
+.bar i.hot{background:var(--over)}
+.bar u{position:absolute;top:-3px;width:2px;height:12px;border-radius:1px;background:var(--fg);opacity:.45;transform:translateX(-1px)}
 .dim{color:var(--dim)}
-.sm{font-size:.85rem;margin:.3rem 0 0}
-footer{margin-top:1.5rem;font-size:.82rem;color:var(--dim);text-align:center}
+.sm{font-size:.85rem;margin:0}
 </style>
 <main>
-  <h1>mira · account pool</h1>
 ${rows || empty}
-  <footer>${snap.serving} of ${snap.total} accounts serving${
-    snap.total - snap.serving > 0 ? ` · ${snap.total - snap.serving} not counted` : ""
-  }<br>updated ${age}s ago</footer>
 </main>`;
 }
