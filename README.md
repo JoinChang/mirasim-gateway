@@ -111,18 +111,27 @@ stays fresh), `modelProbeMaxPerCycle` (8). Secrets via env: `MIRASIM_MASTER_KEY`
 
 ## Docker
 CI builds the image on every push to `main` and pushes it to
-`ghcr.io/joinchang/mirasim-gateway` as `:latest` and `:<sha>`. Compose has no
-`build:` stanza — the server pulls.
+`ghcr.io/joinchang/mirasim-gateway` as `:latest` and `:<sha>`. Compose carries no
+`build:` stanza, so a deployment is not a checkout — the host provides two files
+and a directory, and nothing else:
+```
+docker-compose.yml   not in the image, so it has to live on the host
+.env                 MIRASIM_MASTER_KEY, FIRECRAWL_API_KEY, BIND_ADDR, PORT
+data/                bind-mounted at /data; gateway.db and exercise-<ts>.md
+```
 ```sh
-cp .env.example .env   # set MIRASIM_MASTER_KEY, FIRECRAWL_API_KEY
 docker compose up -d   # pull_policy: always; serve applies migrations on startup
 docker compose exec -T gateway node dist/index.js accounts add --token <rt>
 docker compose exec -T gateway node dist/index.js keys mint --label default --rpm 120
 ```
 Update with `docker compose pull && docker compose up -d`; pin a build by setting
-`IMAGE_TAG` to a commit sha. Accounts/keys/db live in the `./data` volume
-(`gateway.db`); secrets are AES-256-GCM encrypted at rest with
-`MIRASIM_MASTER_KEY`.
+`IMAGE_TAG` to a commit sha. Secrets are AES-256-GCM encrypted at rest in
+`gateway.db` with `MIRASIM_MASTER_KEY` — lose that key and the pool is
+unrecoverable.
+
+`config.json` is copied into the image rather than mounted, so a copy sitting on
+the host is inert: settings change by shipping a new image, or through the
+env overrides named below.
 
 ## Migrating from mirasim-ws-proxy
 ```sh

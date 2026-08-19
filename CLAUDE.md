@@ -16,6 +16,11 @@ docker compose exec -T gateway node dist/index.js models status
 docker compose exec -T gateway node dist/index.js accounts list
 ```
 
+`config.json` is `COPY`d into the image, not mounted. A copy of it next to
+`docker-compose.yml` on a host is therefore inert — it was mounted before the
+image moved to GHCR, and a stale one left behind reads exactly like live config.
+Change settings by shipping an image, or via the CAPS env overrides.
+
 `dist/` is not in version control, and the container has its own copy. The image
 is built by CI and pulled from GHCR; compose carries no `build:` stanza, so
 `docker compose build` is a no-op. Source reaches a deployment by landing on
