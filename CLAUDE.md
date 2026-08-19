@@ -126,14 +126,27 @@ cannot disturb the pool:
 MAX_ATTEMPTS=1 COOLDOWN_MS=1000 PORT=8799 MODEL_PROBE_ENABLED=0 node dist/index.js serve
 ```
 
-Probe bodies need a plausible `max_tokens` — the relay rejects `max_tokens: 1`
-with 400 `invalid_request_error`, which says nothing about the model and leaves it
-unprobeable.
+`max_tokens: 1` no longer gets a probe rejected. It used to 400 with
+`invalid_request_error`, which is why `prober.ts` asks for 16 — but measured
+2026-08-19 on `claude-haiku-4-5` it answered **200**, one output token,
+`stop_reason: max_tokens`. The 16 is now belt-and-braces rather than necessity,
+and a 400 on a probe no longer has that explanation waiting for it. What still
+rejects deterministically, and without spending a token, is a `max_tokens` past
+the model's ceiling (999999) — the cheapest way to make the relay produce an
+error on purpose.
 
 `pool.execute`'s fall-through now names what it hit — per attempt, with the stage,
 the status, `retry-after`, and the relay's own error body. Read `error.attempts`
 before theorising; `all_accounts_throttled` is reserved for when throttling really
 was all of it, and `pool_exhausted` / `no_accounts` cover the rest.
+
+The relay does not frame its errors as SSE, even when the request asked to
+stream. Measured 2026-08-19: an invalid request with `stream: true` came back
+`400` / `content-type: application/json` and a bare `{"error":{…}}` body, byte
+for byte the same as the non-streaming one. `relayError` in `classify.ts` reads a
+`data:` frame as well, which the app also does — but that is insurance for a shape
+this relay has not been seen to send, not a fix for observed behaviour. An error
+raised *after* a stream has started is a separate case and still unobserved.
 
 A 429 means three different things and only the body separates them: this account
 is throttled, the relay has no deployment for the model, or **the relay's shared
