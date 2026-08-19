@@ -67,6 +67,17 @@ export function exhaustedResponse(failures: AttemptFailure[], stop: Stop): Respo
     return parts.join("; ");
   })();
 
+  // The longest wait any throttled attempt reported, promoted to the standard
+  // header. Downstream clients back off on `Retry-After`, not on a value buried
+  // in the JSON body — and the shared-budget refusal carries 3600, so without
+  // this the caller retries straight into a wall it was already told about.
+  const retryAfter = failures
+    .map((f) => Number(f.retryAfter))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .reduce((max, n) => Math.max(max, n), 0);
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (retryAfter > 0) headers["retry-after"] = String(retryAfter);
+
   return new Response(
     JSON.stringify({
       error: {
@@ -75,6 +86,6 @@ export function exhaustedResponse(failures: AttemptFailure[], stop: Stop): Respo
         attempts: failures.map((f) => ({ ...f, accountId: shortId(f.accountId) })),
       },
     }),
-    { status: 429, headers: { "content-type": "application/json" } },
+    { status: 429, headers },
   );
 }

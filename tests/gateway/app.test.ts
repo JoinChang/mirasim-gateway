@@ -130,6 +130,23 @@ describe("gateway app", () => {
     expect(row.outputTokens).toBe(5);
   });
 
+  it("records a mid-stream error as an upstream failure, not a clean 200", async () => {
+    // The relay opened 200, billed the input, then failed. The tokens still count
+    // (they were consumed) but the row must not read as a served request.
+    const sse =
+      'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":40}}}\n\n' +
+      'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n';
+    const { app, db } = build({
+      script: [() => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } })],
+    });
+    const res = await post(app, "/v1/messages", { model: "c", stream: true, messages: [] });
+    await res.text();
+    await new Promise((r) => setTimeout(r, 10));
+    const row = latestUsage(db);
+    expect(row.status).toBe(502);
+    expect(row.inputTokens).toBe(40);
+  });
+
   it("passes the client's anthropic-beta down to the upstream call", async () => {
     const { app, requests } = build({});
     await post(

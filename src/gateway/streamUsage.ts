@@ -3,6 +3,13 @@ import { totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
 export interface StreamUsage {
   inputTokens: number;
   outputTokens: number;
+  /**
+   * The type of an error frame seen mid-stream, if any. A response can open 200
+   * and then fail — the relay bills the input, streams a while, and sends an
+   * `error` event. Without this the turn books as a clean success; with it the
+   * caller can record the upstream failure it actually was.
+   */
+  error?: string;
 }
 
 /**
@@ -19,6 +26,7 @@ export function createUsageScanner() {
   let pending = "";
   let inputTokens = 0;
   let outputTokens = 0;
+  let error: string | undefined;
 
   const absorb = (u: any) => {
     if (!u || typeof u !== "object") return;
@@ -27,6 +35,17 @@ export function createUsageScanner() {
     // Output is cumulative per event, so the last non-zero report wins.
     const output = totalOutputTokens(u);
     if (output > 0) outputTokens = output;
+  };
+
+  // An Anthropic-style error frame is `{"type":"error","error":{"type":…}}`; the
+  // relay may also send a bare `{"error":{…}}`. Either way the turn failed after
+  // the 200 handshake. First one wins — later frames do not un-fail it.
+  const noteError = (json: any) => {
+    if (error !== undefined) return;
+    if (json?.type === "error" || (json?.error && typeof json.error === "object")) {
+      const t = json.error?.type;
+      error = typeof t === "string" ? t : "error";
+    }
   };
 
   function push(chunk: string): void {
@@ -43,13 +62,17 @@ export function createUsageScanner() {
       } catch {
         continue;
       }
+      noteError(json);
       absorb(json?.usage);
       absorb(json?.message?.usage);
       absorb(json?.response?.usage);
     }
   }
 
-  return { push, result: (): StreamUsage => ({ inputTokens, outputTokens }) };
+  return {
+    push,
+    result: (): StreamUsage => ({ inputTokens, outputTokens, ...(error !== undefined ? { error } : {}) }),
+  };
 }
 
 /**

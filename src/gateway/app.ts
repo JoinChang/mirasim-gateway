@@ -112,9 +112,17 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
       if (!HOP_BY_HOP.has(k.toLowerCase())) headers.set(k, v);
     });
     // Metered as the body streams past: recording zero here would exempt every
-    // streaming client from downstream key quotas, and streaming is the norm.
-    const record = (u: { inputTokens: number; outputTokens: number }) =>
-      rec(result.response.status, result.accountId ?? null, { ...u, webSearchRequests: 0, cost: null });
+    // streaming client from downstream key quotas, and streaming is the norm. A
+    // stream that opened 200 and then carried an error frame is booked as the
+    // upstream failure it was (502), not a served request — the tokens still
+    // count, since the relay consumed them before it failed.
+    const record = (u: { inputTokens: number; outputTokens: number; error?: string }) =>
+      rec(u.error !== undefined ? 502 : result.response.status, result.accountId ?? null, {
+        inputTokens: u.inputTokens,
+        outputTokens: u.outputTokens,
+        webSearchRequests: 0,
+        cost: null,
+      });
     if (!result.response.body) {
       record({ inputTokens: 0, outputTokens: 0 });
       return new Response(null, { status: result.response.status, headers });

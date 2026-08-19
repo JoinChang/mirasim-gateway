@@ -52,6 +52,23 @@ describe("createUsageScanner", () => {
     expect(s.result()).toEqual({ inputTokens: 100, outputTokens: 3 });
   });
 
+  it("flags a mid-stream error event, keeping the tokens already consumed", () => {
+    // A 200 stream that fails partway is not a clean success: the relay opened
+    // the response, billed the input, then sent an error frame. Booking it as 200
+    // hides an upstream failure and counts a broken turn as served.
+    const s = createUsageScanner();
+    s.push(sse("message_start", { type: "message_start", message: { usage: { input_tokens: 50 } } }));
+    s.push(sse("error", { type: "error", error: { type: "overloaded_error", message: "Overloaded" } }));
+    expect(s.result().error).toBe("overloaded_error");
+    expect(s.result().inputTokens).toBe(50);
+  });
+
+  it("leaves error undefined for a clean stream", () => {
+    const s = createUsageScanner();
+    s.push(sse("message_start", { type: "message_start", message: { usage: { input_tokens: 1 } } }));
+    expect(s.result().error).toBeUndefined();
+  });
+
   it("counts cached input, which Anthropic reports outside input_tokens", () => {
     const s = createUsageScanner();
     s.push(
