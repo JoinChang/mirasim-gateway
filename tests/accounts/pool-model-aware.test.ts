@@ -89,6 +89,30 @@ describe("pool.execute is model-aware", () => {
     expect(store.list().filter((a) => a.disabledUntil > Date.now()).length).toBe(1);
   });
 
+  const entitlement403 = () =>
+    jsonResponse({ error: { type: "forbidden", message: "your plan does not include this model" } }, 403);
+
+  it("an entitlement 403 is the account's, so it fails over instead of being handed back", async () => {
+    const { pool, seen } = setup([entitlement403, () => jsonResponse({ ok: 2 }, 200)]);
+    const { response } = await pool.execute({
+      kind: "messages",
+      pathname: "/v1/messages",
+      body: { model: "m" },
+      model: "m",
+    });
+    expect(response.status).toBe(200);
+    expect(seen[0]).toEqual({
+      model: "m",
+      outcome: { kind: "account_refused", reason: "entitlement", status: 403 },
+    });
+  });
+
+  it("an entitlement 403 takes that account out of rotation, so the next request does not pay for it again", async () => {
+    const { pool, store } = setup([entitlement403, () => jsonResponse({ ok: 2 }, 200)]);
+    await pool.execute({ kind: "messages", pathname: "/v1/messages", body: { model: "m" }, model: "m" });
+    expect(store.list().filter((a) => a.disabledUntil > Date.now()).length).toBe(1);
+  });
+
   it("reports what it learned about the model", async () => {
     const { pool, seen } = setup([() => jsonResponse({ ok: 1 }, 200)]);
     await pool.execute({

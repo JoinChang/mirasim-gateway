@@ -1,6 +1,12 @@
 import type { AppConfig } from "../config/index.js";
 import { type DeviceIdentity, generateIdentity, identityFromPem } from "../crypto/device.js";
-import { classifyOutcome, type Outcome, relayErrorType, utilizationFrom } from "../models/classify.js";
+import {
+  classifyOutcome,
+  type Outcome,
+  relayErrorMessage,
+  relayErrorType,
+  utilizationFrom,
+} from "../models/classify.js";
 import { callUpstream } from "../upstream/client.js";
 import type { Kind } from "../upstream/relay.js";
 import type { Semaphore } from "../upstream/sem.js";
@@ -218,7 +224,7 @@ export function createPool(opts: {
       // for its own shared budget running out, and only the body tells the third
       // apart. Read once here; the response is rebuilt so callers still get one.
       let text: string | null = null;
-      if (resp.status === 429) {
+      if (resp.status === 429 || resp.status === 403) {
         text = await resp.text().catch(() => "");
         resp = new Response(text, { status: resp.status, headers: resp.headers });
       }
@@ -227,7 +233,10 @@ export function createPool(opts: {
       const util = utilizationFrom(gh);
       if (util != null) opts.store.setUtilization(a.id, util);
 
-      const outcome = classifyOutcome(resp.status, gh, { errorType: text ? relayErrorType(text) : undefined });
+      const outcome = classifyOutcome(resp.status, gh, {
+        errorType: text ? relayErrorType(text) : undefined,
+        errorMessage: text ? relayErrorMessage(text) : undefined,
+      });
       if (req.model) opts.onOutcome?.(req.model, outcome);
 
       // The relay's shared budget, not this account's — so the account is never
@@ -276,6 +285,27 @@ export function createPool(opts: {
         opts.store.setFails(a.id, a.consecutiveFails + 1);
         continue;
       }
+      // An entitlement refusal belongs to the account and will not lift on a
+      // retry, but it implicates neither the model nor the other accounts — a
+      // pool holding more than one plan may well hold one that is entitled, and
+      // handing this straight back would never find it. Take the account out of
+      // rotation so the next request does not pay for it again, and keep the
+      // relay's words in case none of them are entitled.
+      if (outcome.kind === "account_refused") {
+        refused.add(a.id);
+        refusal = { response: resp, accountId: a.id };
+        failures.push({
+          accountId: a.id,
+          stage: "refused",
+          status: resp.status,
+          ...ticketMissing,
+          ...(await said(resp, gh, text)),
+        });
+        opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
+        opts.store.setFails(a.id, a.consecutiveFails + 1);
+        continue;
+      }
+
       if (resp.status >= 500 && fiveXX < cfg.retry5xx) {
         failures.push({
           accountId: a.id,

@@ -9,7 +9,7 @@
  */
 export interface AttemptFailure {
   accountId: string;
-  stage: "refresh" | "call" | "throttled" | "server_error";
+  stage: "refresh" | "call" | "throttled" | "refused" | "server_error";
   /** Transport stages: the thrown error, as text. */
   error?: string;
   /** HTTP stages: the status the relay gave. */

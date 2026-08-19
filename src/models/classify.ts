@@ -4,15 +4,37 @@ export type Outcome =
   | { kind: "ok"; fallbackTo: string | null }
   | { kind: "model_unavailable"; status: number }
   | { kind: "account_throttled" }
+  | { kind: "account_refused"; reason: string; status: number }
   | { kind: "relay_exhausted"; status: number }
   | { kind: "ignored" };
 
 /**
- * The relay's own names for "the budget everyone shares is spent" — as opposed
- * to this account's own window. Taken from the app, which branches on exactly
- * these two before it will blame an account.
+ * The relay's own names for "the budget everyone shares is spent" — a family,
+ * not a pair.
+ *
+ * It was a two-element set of exact strings, taken from the two names the app
+ * had been seen to branch on. The app does not compare: 0.0.208 tests the error
+ * against this alternation, because the same refusal arrives under several words.
+ * An exact set makes the *unenumerated* word the dangerous one — it falls through
+ * to a model verdict, which is how a working model gets marked dead pool-wide.
  */
-const RELAY_WIDE_ERROR_TYPES = new Set(["credit_exhausted_shared", "shared_quota_unavailable"]);
+const RELAY_WIDE_ERROR_TYPES = /credit_exhausted|usage_limit|insufficient_quota|quota_exceeded|billing/i;
+
+/**
+ * The relay saying "slow down". About the caller, never about the model — and it
+ * arrives without `retry-after`, so nothing else here would catch it.
+ */
+const TRANSIENT_ERROR_TYPES = /rate_?limit|throttl|too_many/i;
+
+/**
+ * A refusal that belongs to the account and will not lift on its own.
+ *
+ * The app looks for this on a 403's *message*, not on a 429's type — an account
+ * without the entitlement a route requires is turned away before any quota is
+ * touched. Untyped, a 403 lands in `ignored`, which is safe but silent: the
+ * account looks like a request that merely failed and nothing ever names why.
+ */
+const ENTITLEMENT_REFUSAL = /plan|entitle|invite|subscription/i;
 
 /**
  * An account's window counts as spent only at 100%, which is the bar the app
@@ -25,6 +47,22 @@ export function relayErrorType(text: string): string | undefined {
   try {
     const t = JSON.parse(text)?.error?.type;
     return typeof t === "string" ? t : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The relay's `error.message`.
+ *
+ * Needed as well as the type because the relay says some things only in prose —
+ * the app keeps a table of exact messages (`missing user token`, `device session
+ * replay`) precisely because no code accompanies them.
+ */
+export function relayErrorMessage(text: string): string | undefined {
+  try {
+    const m = JSON.parse(text)?.error?.message;
+    return typeof m === "string" ? m : undefined;
   } catch {
     return undefined;
   }
@@ -62,7 +100,7 @@ export function utilizationFrom(getHeader: GetHeader): number | null {
 export function classifyOutcome(
   status: number,
   getHeader: GetHeader,
-  opts: { errorType?: string; throttleUtilization?: number } = {},
+  opts: { errorType?: string; errorMessage?: string; throttleUtilization?: number } = {},
 ): Outcome {
   const throttleUtilization = opts.throttleUtilization ?? 0.9;
   if (status >= 200 && status < 300) {
@@ -74,12 +112,17 @@ export function classifyOutcome(
     const util = utilizationFrom(getHeader);
     // The account's own window has to be genuinely spent before a shared-budget
     // rejection is allowed to count against it.
-    if (opts.errorType && RELAY_WIDE_ERROR_TYPES.has(opts.errorType) && (util ?? 0) < SPENT_UTILIZATION)
+    if (opts.errorType && RELAY_WIDE_ERROR_TYPES.test(opts.errorType) && (util ?? 0) < SPENT_UTILIZATION)
       return { kind: "relay_exhausted", status };
     if (getHeader("retry-after")) return { kind: "account_throttled" };
     if (util != null && util >= throttleUtilization) return { kind: "account_throttled" };
+    // Reached only when the headers said nothing: a named throttle still has to
+    // beat the fall-through below, which blames the model.
+    if (opts.errorType && TRANSIENT_ERROR_TYPES.test(opts.errorType)) return { kind: "account_throttled" };
     return { kind: "model_unavailable", status };
   }
   if (status >= 500) return { kind: "model_unavailable", status };
+  if (status === 403 && ENTITLEMENT_REFUSAL.test(`${opts.errorType ?? ""} ${opts.errorMessage ?? ""}`))
+    return { kind: "account_refused", reason: "entitlement", status };
   return { kind: "ignored" };
 }
