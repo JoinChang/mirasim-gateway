@@ -70,6 +70,20 @@ describe("gateway app", () => {
     ).toBe(200);
   });
 
+  it("serves the Codex path as the responses dialect, and still calls the relay on /v1/responses", async () => {
+    // The client accepts /backend-api/codex/responses and normalises it to
+    // /v1/responses before it reaches the relay, so a Codex client configured the
+    // ChatGPT way is served rather than 404'd — and the relay still sees the one
+    // pathname it knows.
+    const { app, requests } = build({
+      script: [() => R({ output: [], usage: { input_tokens: 1, output_tokens: 1 } })],
+    });
+    const res = await post(app, "/backend-api/codex/responses", { model: "c", input: [] });
+    expect(res.status).toBe(200);
+    expect(requests[0]!.pathname).toBe("/v1/responses");
+    expect(requests[0]!.kind).toBe("responses");
+  });
+
   it("applies model alias before upstream", async () => {
     const { app, requests } = build({ aliases: { haiku: "claude-haiku-4-5" } });
     await post(app, "/v1/messages", { model: "haiku", messages: [] });

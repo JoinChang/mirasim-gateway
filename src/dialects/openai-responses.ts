@@ -74,6 +74,10 @@ function makeAdapter(body: any, cfg: AppConfig): DialectAdapter {
 export const responsesDialect: DialectSpec = {
   kind: "responses",
   pathname: "/v1/responses",
+  // What Codex sends when it is pointed at a ChatGPT-style backend. The app
+  // accepts both and rewrites this one to /v1/responses; unserved, it is a 404
+  // that looks like the gateway being broken.
+  altPathnames: ["/backend-api/codex/responses"],
   wantsWebSearch,
   maxUses: () => 4,
   makeAdapter,

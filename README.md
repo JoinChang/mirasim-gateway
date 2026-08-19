@@ -6,7 +6,8 @@ SQLite (Drizzle). Signs traffic like the desktop client (mrs-sig-v1 + device
 ticket), emulates server-side `web_search`, and meters downstream callers per key.
 
 ## Endpoints
-- `POST /v1/messages` (Anthropic) · `POST /v1/chat/completions` · `POST /v1/responses` (OpenAI, Codex) · `GET /v1/models`
+- `POST /v1/messages` (Anthropic) · `POST /v1/chat/completions` · `POST /v1/responses`, also served at
+  `/backend-api/codex/responses` (OpenAI, Codex) · `GET /v1/models`
 - `GET /health` · `GET /metrics` (`?format=prometheus`)
 
 ## Quickstart (local)

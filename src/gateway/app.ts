@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { Pool } from "../accounts/pool.js";
 import type { AccountStore } from "../accounts/store.js";
 import type { AppConfig } from "../config/index.js";
@@ -125,10 +125,10 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     });
   };
 
-  // The spec carries its own kind and pathname, so the route table no longer
+  // The spec carries its own kind and pathnames, so the route table no longer
   // repeats either of them.
-  const route = (spec: DialectSpec) =>
-    app.post(spec.pathname, async (c) => {
+  const route = (spec: DialectSpec) => {
+    const handler = async (c: Context) => {
       const body = await c.req.json().catch(() => null);
       if (!body) return c.json({ error: { type: "invalid_request", message: "invalid JSON body" } }, 400);
       applyModelAlias(body, cfg);
@@ -149,7 +149,9 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
       const started = Date.now();
       const result = await runDialect(spec, deps, body, !!body.stream, c.req.header("anthropic-beta"));
       return finish(c, result, spec.kind, body.model ?? "", started);
-    });
+    };
+    for (const p of [spec.pathname, ...(spec.altPathnames ?? [])]) app.post(p, handler);
+  };
 
   route(messagesDialect);
   route(chatDialect);

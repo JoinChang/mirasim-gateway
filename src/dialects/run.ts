@@ -14,7 +14,16 @@ import type { DialectDeps } from "./deps.js";
  */
 export interface DialectSpec {
   kind: Dialect;
+  /** The one the relay knows, and so the one every upstream call uses. */
   pathname: string;
+  /**
+   * Other pathnames this dialect answers on, served identically.
+   *
+   * Inbound only: the app normalises these to `pathname` before the relay sees
+   * them, and so does this. A client that spells the route differently is the
+   * same request, not a different upstream.
+   */
+  altPathnames?: string[];
   /** Does this body ask for server-side web_search? Each dialect spells it differently. */
   wantsWebSearch(body: any): boolean;
   /** Anthropic carries a per-request cap on the tool itself; the OpenAI dialects do not. */
