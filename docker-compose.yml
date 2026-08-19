@@ -1,7 +1,7 @@
 services:
   gateway:
-    build: .
-    image: mirasim-gateway
+    image: "ghcr.io/joinchang/mirasim-gateway:${IMAGE_TAG:-latest}"
+    pull_policy: always
     container_name: mirasim-gateway
     restart: unless-stopped
     ports:
@@ -14,16 +14,9 @@ services:
       FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY}"
       MIRASIM_APP_VERSION: "${MIRASIM_APP_VERSION:-0.0.208}"
       SEARCH_PROVIDER: "${SEARCH_PROVIDER:-firecrawl}"
-      # Off to match app 0.0.208, which no longer signs; set to 1 to restore
-      # signing if the relay makes it mandatory again.
       DEVICE_SIGNING: "${DEVICE_SIGNING:-0}"
       # MIRASIM_RELAY / MIRASIM_LOGIN / SERPER_API_KEY / SEARXNG_URL as needed
     volumes:
       - ./data:/data
-      - ./config.json:/app/config.json:ro
-      # Source material for `accounts exercise`, which reviews this repo's own
-      # code. Read-only, and only ever read — without it the keep-alive round
-      # has nothing to work on inside the container.
-      - ./src:/app/src:ro
     # Linux: if ./data writes fail, set to your host uid:gid
     # user: "1000:1000"

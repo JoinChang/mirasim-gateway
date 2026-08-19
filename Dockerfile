@@ -16,6 +16,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package.json ./package.json
 COPY config.json ./config.json
+COPY src ./src
 USER node
 EXPOSE 8788
 HEALTHCHECK --interval=30s --timeout=5s --start-period=8s --retries=3 \
