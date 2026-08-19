@@ -109,9 +109,6 @@ Get the current constants from the release manifest, which needs no credentials:
 curl -s https://cdn-assets.mirasim.ai/mirasim/releases/latest.json | jq '{version, payload}'
 ```
 
-`.claude/skills/tracking-the-app/` does this and the rest of the loop —
-`probe.py fetch` prints the version and ABI, then verifies and unpacks the payload.
-
 Hot updates cannot cross a shell ABI gap (`minShellAbi`/`maxShellAbi` in
 `payload.json`), and the requirement climbs: 0.0.170 wanted 33, **0.0.208 wants
 38** (min and max both). The installed shell on the mac is ABI 23, which is why
@@ -156,14 +153,27 @@ Keep-alive is scheduled by the host's scheduler calling `docker compose exec` �
 a systemd timer on the server, launchd on a mac. Don't add a scheduler that opens
 the database directly.
 
+## Checking a constant against the app
+
+The gateway impersonates the desktop client, so every constant it sends and every
+relay error it interprets is a claim about that client — and the claim is
+checkable. `payload.url` from the manifest above is the app's own server bundle,
+needs no credentials, and carries the signing scheme, the quota header names and
+the error vocabulary as plain string literals.
+
+Two things to know before reading it. It is ~20 MB across six lines, one of them
+15 MB, so search it by byte offset — line-oriented tools are useless on it. And
+every number is spelled as hex arithmetic (`randomBytes(12)` ships as
+`randomBytes(-0x5*0x4f5+0x1*-0x1f07+0x37dc)`), so evaluate rather than eyeball.
+
+A signing constant found there can be copied: the client is the thing being
+impersonated. A *classification* rule cannot — the bundle holds four separate
+error vocabularies and only two reach the wire, so confirm against a real
+response before teaching `classifyOutcome` a new branch. `blockedReason()`'s
+returns are local UI state, and reading them as relay vocabulary would mark a
+working model dead pool-wide.
+
 ## Agent skills
-
-### Tracking the app
-
-The gateway impersonates the desktop client, so its constants and its reading of
-relay errors are both claims about that client. `.claude/skills/tracking-the-app/`
-is how to check them against the app's own bundle — the release manifest needs no
-credentials, so the loop runs unattended.
 
 ### Issue tracker
 
