@@ -78,7 +78,15 @@ Token extraction lives only in `src/usage/tokens.ts`. Anthropic reports
 `input_tokens` for the *uncached* part alone (a 4804-token cached prompt reports
 9), while OpenAI's `prompt_tokens` already includes cached input. Three private
 copies of this rule had drifted into undercounting real traffic by five orders of
-magnitude — don't add a fourth.
+magnitude — don't add a fourth. Confirmed live 2026-08-19: a cache hit reported
+`input_tokens: 7` for an 8282-token prompt, and the metered row correctly read
+8289 (`7 + 0 + 8282`).
+
+Caching activates well above Anthropic's documented 2048-token floor on this
+relay. Measured 2026-08-19 on `claude-haiku-4-5`: a 3311-token system prompt with
+`cache_control` was **not** cached (`cache_creation_input_tokens: 0` on the first
+call), while an 8282-token one was. So Claude Code's shorter turns get no cache
+discount here — only large-context turns cross the threshold and hit.
 
 ## Hosts
 
