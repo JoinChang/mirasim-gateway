@@ -10,3 +10,4 @@ pnpm-debug.log
 .firecrawl/
 .superpowers/
 .claude/
+*.stackdump
