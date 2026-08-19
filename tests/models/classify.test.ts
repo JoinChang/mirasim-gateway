@@ -1,10 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { classifyOutcome } from "../../src/models/classify.js";
+import { classifyOutcome, relayErrorMessage, relayErrorType } from "../../src/models/classify.js";
 
 const hdrs =
   (h: Record<string, string>) =>
   (k: string): string | null =>
     h[k.toLowerCase()] ?? null;
+
+describe("reading the relay's error body", () => {
+  const sse = 'event: error\ndata: {"error":{"type":"usage_limit","message":"your plan is spent"}}\n\n';
+
+  it("reads an error delivered as an SSE frame, not only as a bare body", () => {
+    // A streamed request that fails answers in its own framing. Parsed as JSON
+    // this throws, and every classification that depends on the body silently
+    // degrades to the header-only path — which blames the model.
+    expect(relayErrorType(sse)).toBe("usage_limit");
+    expect(relayErrorMessage(sse)).toBe("your plan is spent");
+  });
+
+  it("reads a bare JSON body", () => {
+    const json = '{"error":{"type":"rate_limited","message":"slow down"}}';
+    expect(relayErrorType(json)).toBe("rate_limited");
+    expect(relayErrorMessage(json)).toBe("slow down");
+  });
+
+  it("finds nothing in an HTML error page rather than guessing", () => {
+    expect(relayErrorType("<html><body>502 Bad Gateway</body></html>")).toBeUndefined();
+    expect(relayErrorMessage("<html><body>502 Bad Gateway</body></html>")).toBeUndefined();
+  });
+});
 
 describe("classifyOutcome", () => {
   it("200 with no litellm headers is ok with no fallback", () => {

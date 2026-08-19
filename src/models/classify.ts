@@ -42,14 +42,36 @@ const ENTITLEMENT_REFUSAL = /plan|entitle|invite|subscription/i;
  */
 const SPENT_UTILIZATION = 1;
 
-/** The relay's `error.type`, if the body is JSON shaped like one. */
-export function relayErrorType(text: string): string | undefined {
+/**
+ * The relay's error object, whatever framing it arrived in.
+ *
+ * A streaming request that fails answers in its own framing, so the body is
+ * `data: {…}` rather than `{…}`, and a proxy failing in front of the relay
+ * answers with an HTML page. Reading only the bare shape means every rule that
+ * depends on the body stops applying on exactly the requests Claude Code makes —
+ * it always streams — and classification falls through to blaming the model.
+ *
+ * The unwrapping matches the app: an `error` envelope if there is one, otherwise
+ * the object itself.
+ */
+function relayError(text: string): { type?: unknown; message?: unknown } | undefined {
+  const t = text.trim();
+  // `<` is an HTML error page, and no amount of parsing will find a type in it.
+  if (!t || t.startsWith("<")) return undefined;
+  const json = t.startsWith("{") ? t : (t.split("\n").find((l) => l.startsWith("data:")) ?? "").slice(5).trim();
+  if (!json.startsWith("{")) return undefined;
   try {
-    const t = JSON.parse(text)?.error?.type;
-    return typeof t === "string" ? t : undefined;
+    const parsed = JSON.parse(json);
+    return parsed?.error ?? parsed;
   } catch {
     return undefined;
   }
+}
+
+/** The relay's `error.type`, if the body carries one. */
+export function relayErrorType(text: string): string | undefined {
+  const t = relayError(text)?.type;
+  return typeof t === "string" ? t : undefined;
 }
 
 /**
@@ -60,12 +82,8 @@ export function relayErrorType(text: string): string | undefined {
  * replay`) precisely because no code accompanies them.
  */
 export function relayErrorMessage(text: string): string | undefined {
-  try {
-    const m = JSON.parse(text)?.error?.message;
-    return typeof m === "string" ? m : undefined;
-  } catch {
-    return undefined;
-  }
+  const m = relayError(text)?.message;
+  return typeof m === "string" ? m : undefined;
 }
 
 /** Highest reported unified-window utilization, or null when the relay sent none. */

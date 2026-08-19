@@ -113,6 +113,20 @@ describe("pool.execute is model-aware", () => {
     expect(store.list().filter((a) => a.disabledUntil > Date.now()).length).toBe(1);
   });
 
+  it("a quota 429 wearing SSE framing is still the relay's budget, not a dead model", async () => {
+    const body = 'event: error\ndata: {"error":{"type":"credit_exhausted_shared","message":"spent"}}\n\n';
+    const { pool, seen } = setup([
+      () =>
+        new Response(body, {
+          status: 429,
+          headers: { "content-type": "text/event-stream", "anthropic-ratelimit-unified-7d-utilization": "0.004" },
+        }),
+      () => jsonResponse({ ok: 2 }, 200),
+    ]);
+    await pool.execute({ kind: "messages", pathname: "/v1/messages", body: { model: "m" }, model: "m" });
+    expect(seen[0]!.outcome).toEqual({ kind: "relay_exhausted", status: 429 });
+  });
+
   it("reports what it learned about the model", async () => {
     const { pool, seen } = setup([() => jsonResponse({ ok: 1 }, 200)]);
     await pool.execute({

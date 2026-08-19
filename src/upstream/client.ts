@@ -43,6 +43,11 @@ export function callUpstream(
     "x-mirasim-agent": AGENT_FOR_KIND[kind],
     "x-mirasim-session": SERVER_SESSION,
     "x-mirasim-call": crypto.randomUUID(),
+    // Opt out of collection, always. The app sends this when its own flag is off;
+    // for a gateway the question is not ours to answer either way — the prompts
+    // passing through belong to the downstream caller and the quota belongs to a
+    // pooled account, so volunteering either is not consent we can give.
+    "x-mirasim-collect": "off",
   };
   if (hasBody) headers["content-type"] = "application/json";
   if (kind === "messages") headers["anthropic-version"] = (bodyObj as any)?.anthropic_version ?? "2023-06-01";

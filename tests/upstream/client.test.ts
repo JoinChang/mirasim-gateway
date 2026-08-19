@@ -25,6 +25,9 @@ describe("callUpstream", () => {
     expect(seen.headers["x-mirasim-session"]).toBeTruthy();
     expect(seen.headers["x-mirasim-sig"]).toBeTruthy();
     expect(seen.headers["x-mirasim-device"]).toBe(id.deviceId);
+    // Not sending this is consent by default, and the prompts flowing through are
+    // the downstream caller's, not ours to volunteer.
+    expect(seen.headers["x-mirasim-collect"]).toBe("off");
   });
   it("uses plain token and no signature when signing off", async () => {
     let seen: any = null;
