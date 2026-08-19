@@ -29,12 +29,14 @@ export function summarizeRound(events: RoundEvent[], allAccounts: string[] = [])
 
   for (const e of events) {
     const id = e.accountId ?? "<none>";
-    const t = (perAccount[id] ??= { requests: 0, inputTokens: 0, outputTokens: 0, failures: 0, avgLatencyMs: 0 });
+    perAccount[id] ??= { requests: 0, inputTokens: 0, outputTokens: 0, failures: 0, avgLatencyMs: 0 };
+    const t = perAccount[id]!;
     t.requests++;
     t.inputTokens += e.inputTokens;
     t.outputTokens += e.outputTokens;
     if (e.status < 200 || e.status >= 300) t.failures++;
-    (latencies[id] ??= []).push(e.latencyMs);
+    latencies[id] ??= [];
+    latencies[id]!.push(e.latencyMs);
   }
   for (const [id, xs] of Object.entries(latencies))
     perAccount[id]!.avgLatencyMs = Math.round(xs.reduce((a, b) => a + b, 0) / xs.length);

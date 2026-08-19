@@ -153,7 +153,7 @@ describe("gateway app", () => {
   });
 
   it("explains the relay's exhausted-capacity 403 instead of passing on an auth-looking error", async () => {
-    const { app, metrics } = build({
+    const { app } = build({
       script: [
         () =>
           R({ type: "error", error: { type: "permission_error", message: "This request was not authorized." } }, 403),
