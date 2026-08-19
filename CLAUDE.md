@@ -16,8 +16,12 @@ docker compose exec -T gateway node dist/index.js models status
 docker compose exec -T gateway node dist/index.js accounts list
 ```
 
-`dist/` is not in version control, and the container has its own copy. After
-changing source: `docker compose build && docker compose up -d`. A host
+`dist/` is not in version control, and the container has its own copy. The image
+is built by CI and pulled from GHCR; compose carries no `build:` stanza, so
+`docker compose build` is a no-op. Source reaches a deployment by landing on
+`main`, then `docker compose pull && docker compose up -d`. To run an unpushed
+change, build the tag by hand:
+`docker build -t ghcr.io/joinchang/mirasim-gateway:latest .`. A host
 `pnpm build` alone leaves the container running the old code — and a stale `dist/`
 is how `models status` came to print a usage string for commands that already
 existed.
@@ -105,8 +109,9 @@ pooled account draws on that one budget, so failing over cannot help and the poo
 returns it immediately. An account is only blamed once its own utilization reaches
 100% — the same bar the app uses.
 
-Keep-alive is scheduled by launchd calling `docker compose exec` — don't add a
-host-side scheduler that opens the database directly.
+Keep-alive is scheduled by the host's scheduler calling `docker compose exec` —
+a systemd timer on the server, launchd on a mac. Don't add a scheduler that opens
+the database directly.
 
 ## Agent skills
 

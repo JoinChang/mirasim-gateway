@@ -31,6 +31,7 @@ migrate                                 apply DB migrations
 accounts import [--from accounts.json]  migrate encrypted accounts + device.pem
 accounts add [--token <rt>]             add one (validates via /auth/refresh)
 accounts list | remove <id>
+accounts check                          per account: is the relay serving again? (free)
 keys mint --label L [--rpm N] [--daily-tokens N] | list | revoke <id>
 device from-app | show                  macOS: import the app's registered device key (shared)
 models status | probe                   per-model verdict; run one probe cycle now
@@ -82,15 +83,24 @@ Cost is dominated by model choice, not prompt size. Two same-round requests of
 0.42pp on `claude-opus-4-8` — a 25× spread. Use `--models claude-haiku-4-5` for
 keep-alive: a full 5-account round then costs about 0.02pp each.
 
-`deploy/keepalive.plist` schedules it twice daily via launchd, running
-`docker compose exec` rather than the host CLI. That matters: `./data` is a bind
-mount, so a host process and the container writing the same SQLite WAL across a
-virtualised filesystem is how databases get corrupted. **The container is the
+Schedule it twice daily from the host — a systemd timer on a Linux server, launchd
+on a mac — and have the schedule run `docker compose exec` rather than the host
+CLI. That matters: `./data` is a bind mount, so a host process and the container
+writing the same SQLite WAL across a virtualised filesystem is how databases get
+corrupted. **The container is the
 sole writer — always reach the CLI through it:**
 ```sh
 docker compose exec -T gateway node dist/index.js models status
 docker compose exec -T gateway node dist/index.js accounts list
 ```
+The round degrades cleanly inside the container: the reviewed files ship in the
+image, and with no `.git` there the commit digest is skipped rather than failing.
+
+`accounts check` is the other half — it asks per account whether the relay is
+serving again, over `GET /v1/models`, which costs no tokens and sits behind the
+same shared-budget gate. Polling it while an outage lifts is therefore free; the
+gradual restorations are announced a thousand users at a time, so the first
+account back is the signal, not the last.
 
 ## Config (`config.json`, env overrides in CAPS)
 search provider/limit, allow/prefer/block domains, model aliases, deviceSigning,
@@ -100,12 +110,19 @@ stays fresh), `modelProbeMaxPerCycle` (8). Secrets via env: `MIRASIM_MASTER_KEY`
 `FIRECRAWL_API_KEY`, `MIRASIM_APP_VERSION`, `MIRASIM_RELAY`, `MIRASIM_LOGIN`.
 
 ## Docker
+CI builds the image on every push to `main` and pushes it to
+`ghcr.io/joinchang/mirasim-gateway` as `:latest` and `:<sha>`. Compose has no
+`build:` stanza — the server pulls.
 ```sh
-cp .env.example .env   # set MIRASIM_MASTER_KEY, FIRECRAWL_API_KEY, downstream key via `keys mint`
-docker compose up -d --build
+cp .env.example .env   # set MIRASIM_MASTER_KEY, FIRECRAWL_API_KEY
+docker compose up -d   # pull_policy: always; serve applies migrations on startup
+docker compose exec -T gateway node dist/index.js accounts add --token <rt>
+docker compose exec -T gateway node dist/index.js keys mint --label default --rpm 120
 ```
-Accounts/keys/db live in the `./data` volume (`gateway.db`); secrets are
-AES-256-GCM encrypted at rest with `MIRASIM_MASTER_KEY`.
+Update with `docker compose pull && docker compose up -d`; pin a build by setting
+`IMAGE_TAG` to a commit sha. Accounts/keys/db live in the `./data` volume
+(`gateway.db`); secrets are AES-256-GCM encrypted at rest with
+`MIRASIM_MASTER_KEY`.
 
 ## Migrating from mirasim-ws-proxy
 ```sh
