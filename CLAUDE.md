@@ -109,16 +109,28 @@ A 429 means three different things and only the body separates them: this accoun
 is throttled, the relay has no deployment for the model, or **the relay's shared
 budget is spent** (`credit_exhausted_shared`, also `shared_quota_unavailable`).
 The last one sends `retry-after: 3600` and so read as an account throttle for four
-days, cooling five healthy accounts sitting at 20% of their own quota. Every
-pooled account draws on that one budget, so failing over cannot help and the pool
-returns it immediately. An account is only blamed once its own utilization reaches
-100% — the same bar the app uses.
+days, cooling five healthy accounts sitting at 20% of their own quota. An account
+is only blamed once its own utilization reaches 100% — the same bar the app uses.
+
+That shared budget is **per plan, not per pool**. Measured 2026-08-19: the one
+`max` account served normally at 10% of its 5h window while all four `plus`
+accounts returned `credit_exhausted_shared` with their own windows untouched at
+0%. So failing over is futile only among accounts on the same plan — across
+plans it is the whole point of holding a mixed pool, and the pool should not
+return a shared-budget refusal until it has tried the other plans it holds.
 
 Keep-alive is scheduled by the host's scheduler calling `docker compose exec` —
 a systemd timer on the server, launchd on a mac. Don't add a scheduler that opens
 the database directly.
 
 ## Agent skills
+
+### Tracking the app
+
+The gateway impersonates the desktop client, so its constants and its reading of
+relay errors are both claims about that client. `.claude/skills/tracking-the-app/`
+is how to check them against the app's own bundle — the release manifest needs no
+credentials, so the loop runs unattended.
 
 ### Issue tracker
 
