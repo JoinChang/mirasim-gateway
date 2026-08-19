@@ -31,6 +31,29 @@ change, build the tag by hand:
 is how `models status` came to print a usage string for commands that already
 existed.
 
+## Lint on Windows
+
+`pnpm exec biome ci src tests` fails here on ~93 files, almost none of them yours.
+`core.autocrlf=true` gives a CRLF working tree while biome formats to LF, so every
+file differs; CI checks out LF on Linux and is green. The hazard is not the noise,
+it is what hides in it — an import-order error and an over-long line both reached
+a commit that way.
+
+Check the files you changed against LF instead of reading past the wall:
+
+```sh
+mkdir -p .scratch/lintcheck/src/gateway
+python -c "import io,sys; f=sys.argv[1]; io.open('.scratch/lintcheck/'+f,'wb').write(io.open(f,'rb').read().replace(b'
+',b'
+'))" src/gateway/app.ts
+node node_modules/@biomejs/biome/bin/biome ci .scratch/lintcheck
+```
+
+Run it from the repo root so the root `biome.json` applies — a copy of the config
+inside the scratch tree makes biome refuse both. `--line-ending=crlf` is the
+tempting shortcut and it lies in the other direction: files holding multi-line
+template literals (`usage-page.ts`, `chart-asset.ts`) then fail for nothing.
+
 ## Models
 
 Only these eight work. The relay advertises ~40; the rest are dead:
