@@ -148,6 +148,17 @@ for byte the same as the non-streaming one. `relayError` in `classify.ts` reads 
 this relay has not been seen to send, not a fix for observed behaviour. An error
 raised *after* a stream has started is a separate case and still unobserved.
 
+The relay ignores `anthropic-beta` outright. Measured 2026-08-19 on
+`claude-haiku-4-5`: a real beta, a made-up one, and none at all all returned 200,
+and the header was never echoed. So forwarding the caller's betas is harmless
+(and free upside if the relay ever honours them), while a whitelist only discards
+betas the caller legitimately asked for — `filterAnthropicBeta` now forwards all
+but `oauth-2025-04-20`, the one value the desktop client itself strips. Two
+sibling headers turned out to be inert too: `x-mirasim-probe` did not change the
+5h utilization the response reported (identical delta with and without it), so the
+gateway does not send it; `x-mirasim-collect: off` costs nothing and is sent on
+every call regardless.
+
 A 429 means three different things and only the body separates them: this account
 is throttled, the relay has no deployment for the model, or **the relay's shared
 budget is spent** (`credit_exhausted_shared`, also `shared_quota_unavailable`).

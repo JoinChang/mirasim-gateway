@@ -1,4 +1,4 @@
-import { HOP_BY_HOP, KEPT_BETAS } from "./relay.js";
+import { DROPPED_BETAS, HOP_BY_HOP } from "./relay.js";
 
 /** Header values must be ASCII; percent-encode anything else (matches desktop). */
 export function sanitizeHeader(value: string): string {
@@ -21,14 +21,14 @@ export function stripHopByHop(h: Record<string, string>): Record<string, string>
   return out;
 }
 
-/** Keep only relay-honoured anthropic-beta values; drop the header if none remain. */
+/** Forward the caller's anthropic-beta values, dropping only what the app drops. */
 export function filterAnthropicBeta(h: Record<string, string>): Record<string, string> {
   const beta = h["anthropic-beta"];
   if (beta === undefined) return h;
   const kept = beta
     .split(",")
     .map((s) => s.trim())
-    .filter((s) => KEPT_BETAS.includes(s));
+    .filter((s) => s && !DROPPED_BETAS.includes(s));
   const out = { ...h };
   if (kept.length) out["anthropic-beta"] = kept.join(",");
   else delete out["anthropic-beta"];

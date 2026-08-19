@@ -63,13 +63,18 @@ describe("callUpstream", () => {
     return seen;
   };
 
-  it("forwards the betas the relay honours, so a 1m context request survives the hop", async () => {
+  it("forwards the caller's betas, since the relay ignores unknown ones anyway", async () => {
     const seen = await call("claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14");
+    expect(seen["anthropic-beta"]).toBe("claude-code-20250219,context-1m-2025-08-07,interleaved-thinking-2025-05-14");
+  });
+
+  it("drops oauth-2025-04-20, the one value the app strips, and forwards the rest", async () => {
+    const seen = await call("oauth-2025-04-20,context-1m-2025-08-07");
     expect(seen["anthropic-beta"]).toBe("context-1m-2025-08-07");
   });
 
-  it("sends no beta header when the client asked only for ones the relay ignores", async () => {
-    const seen = await call("claude-code-20250219,effort-2025-11-24");
+  it("sends no beta header when the client asked only for the dropped one", async () => {
+    const seen = await call("oauth-2025-04-20");
     expect(seen["anthropic-beta"]).toBeUndefined();
   });
 
