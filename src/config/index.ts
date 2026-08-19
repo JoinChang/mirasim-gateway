@@ -22,7 +22,12 @@ const ConfigSchema = z.object({
   retry5xxDelayMs: z.number().int().nonnegative().default(500),
   emitCitations: z.boolean().default(true),
   minResultsBeforeFallback: z.number().int().nonnegative().default(2),
-  deviceSigning: z.boolean().default(true),
+  // Off by default: app 0.0.208 dropped device signing (no x-mirasim-device/ts/
+  // nonce/sig, its signRequest hook resolves to nothing), and the relay was
+  // checked to still authenticate a bearer-only request — a canary returned 200
+  // with the full catalogue, unsigned. The switch stays so DEVICE_SIGNING=true
+  // (or the config file) restores it if the relay ever makes signing mandatory.
+  deviceSigning: z.boolean().default(false),
   allowDomains: z.array(z.string()).default([]),
   preferDomains: z.array(z.string()).default([]),
   blockDomains: z.array(z.string()).default([]),
@@ -78,12 +83,14 @@ export function loadConfig(input: { fileJson: Record<string, unknown>; env: Node
 
   return {
     ...validated,
-    appVersion: env.MIRASIM_APP_VERSION || "0.0.150",
-    // App 0.0.182 dropped `mirasim-relay.mirofish.ai` entirely — the constant it
-    // resolves the relay from is this host, and the old name appears nowhere in
-    // that build. Both answer identically today (same accounts, same tickets,
-    // and the same shared-quota rejection), so this is a move ahead of the old
-    // name's retirement, not a fix for anything.
+    appVersion: env.MIRASIM_APP_VERSION || "0.0.208",
+    // App 0.0.208 still resolves the relay from this host (its build-time
+    // __MIRASIM_RELAY_BASE_URL__ || RELAY_BASE_URL || RELAY_URL || this constant),
+    // so the pin is unchanged. That build also dropped device signing entirely —
+    // no x-mirasim-device/ts/nonce/sig, and its signRequest hook resolves to
+    // nothing — and the relay was checked to authenticate a bearer-only request
+    // all the same (a canary returned 200 with the full catalogue, unsigned). The
+    // gateway keeps the signing code behind DEVICE_SIGNING; production sets it off.
     relayBase: stripSlash(env.MIRASIM_RELAY || "https://relay.mirasim.ai"),
     // App 0.0.173 resolves its login host as `acs || LOGIN_URL || ocs`, and `acs`
     // is this string — so the old `admin.test.mirofish.ai` is now a branch the
