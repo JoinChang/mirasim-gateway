@@ -12,9 +12,11 @@ services:
       DATA_DIR: "/data"
       MIRASIM_MASTER_KEY: "${MIRASIM_MASTER_KEY}"
       FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY}"
-      MIRASIM_APP_VERSION: "${MIRASIM_APP_VERSION:-0.0.150}"
+      MIRASIM_APP_VERSION: "${MIRASIM_APP_VERSION:-0.0.208}"
       SEARCH_PROVIDER: "${SEARCH_PROVIDER:-firecrawl}"
-      DEVICE_SIGNING: "${DEVICE_SIGNING:-1}"
+      # Off to match app 0.0.208, which no longer signs; set to 1 to restore
+      # signing if the relay makes it mandatory again.
+      DEVICE_SIGNING: "${DEVICE_SIGNING:-0}"
       # MIRASIM_RELAY / MIRASIM_LOGIN / SERPER_API_KEY / SEARXNG_URL as needed
     volumes:
       - ./data:/data
