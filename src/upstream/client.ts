@@ -3,6 +3,7 @@ import type { DeviceIdentity } from "../crypto/device.js";
 import { signatureHeaders } from "../crypto/signing.js";
 import { filterAnthropicBeta, sanitizeHeader } from "./headers.js";
 import { AGENT_FOR_KIND, type Kind, SERVER_SESSION } from "./relay.js";
+import { scrubMessagesBody } from "./scrub.js";
 import type { Semaphore } from "./sem.js";
 
 export interface CallCtx {
@@ -31,7 +32,10 @@ export function callUpstream(
 ): Promise<Response> {
   const method = opts.method ?? "POST";
   const hasBody = method !== "GET" && method !== "HEAD" && bodyObj !== undefined;
-  const bodyStr = hasBody ? JSON.stringify(bodyObj) : "";
+  // Only the Anthropic path carries a `system`, and only it hits the content
+  // check that parts these two strings; the OpenAI dialects are untouched.
+  const outgoing = kind === "messages" ? scrubMessagesBody(bodyObj) : bodyObj;
+  const bodyStr = hasBody ? JSON.stringify(outgoing) : "";
   const cred = ctx.ticket ?? ctx.token;
   const headers: Record<string, string> = {
     authorization: `Bearer ${cred}`,
