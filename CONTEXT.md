@@ -38,3 +38,24 @@ request is how the verdict gets formed.
 
 _Avoid_: "model health", "model status" (the table is named `model_status`, but
 the concept is the verdict).
+
+## Relay transport
+
+The one seam between the pool and the wire. Built once with the stable facts —
+relay base, app version, whether device signing is on, the `fetch` to use, the
+concurrency gate — and given a Relay request plus an account's credential, it
+produces the actual signed HTTP request: the `x-mirasim-*` headers, the
+collection opt-out, the body scrub, the beta filter, the signature. The pool
+knows none of that; it hands over a Relay request and gets a `Response`. A fake
+transport at the same seam is how the pool is tested without a live `fetch`.
+
+_Avoid_: "http client", "fetch wrapper" — the point is the seam, not the call.
+
+## Reaction
+
+What the pool does about an outcome, as data: return the response to the caller
+or walk on, and if walking on, whether to cool the account, whether to count the
+failure against it, whether to drop it from this call's rotation. `reactTo` maps
+a Model verdict to a Reaction; the pool applies it. The verdict is *what the
+response means*; the reaction is *what to do about it* — kept apart so each is a
+small, pure decision.
