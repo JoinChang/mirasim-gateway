@@ -13,10 +13,13 @@ export function usageRepo(db: DB) {
      * zero-token day: the internal reachability probes land here too, and a
      * probe is not a day of use.
      */
-    dailyTokens(sinceMs: number): { day: string; tokens: number }[] {
+    dailyTokens(sinceMs: number, offsetHours = 0): { day: string; tokens: number }[] {
+      // Bucket by the operator's local day, not UTC: `date(..., '+8 hours')`
+      // shifts the boundary so 00:00–08:00 local traffic is not booked yesterday.
+      const shift = `${offsetHours >= 0 ? "+" : ""}${offsetHours} hours`;
       return db
         .select({
-          day: sql<string>`date(${usageEvents.ts} / 1000, 'unixepoch')`,
+          day: sql<string>`date(${usageEvents.ts} / 1000, 'unixepoch', ${shift})`,
           tokens: sql<number>`sum(${usageEvents.inputTokens} + ${usageEvents.outputTokens})`,
         })
         .from(usageEvents)

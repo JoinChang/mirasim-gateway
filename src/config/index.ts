@@ -22,6 +22,8 @@ const ConfigSchema = z.object({
   retry5xxDelayMs: z.number().int().nonnegative().default(500),
   emitCitations: z.boolean().default(true),
   minResultsBeforeFallback: z.number().int().nonnegative().default(2),
+  /** Hours to shift UTC by when bucketing usage into days (China is +8). */
+  usageTzOffsetHours: z.number().int().default(8),
   // Off by default: app 0.0.208 dropped device signing (no x-mirasim-device/ts/
   // nonce/sig, its signRequest hook resolves to nothing), and the relay was
   // checked to still authenticate a bearer-only request — a canary returned 200
@@ -65,6 +67,7 @@ export function loadConfig(input: { fileJson: Record<string, unknown>; env: Node
     ...(env.MAX_ATTEMPTS ? { maxAttempts: Number(env.MAX_ATTEMPTS) } : {}),
     ...(env.RETRY_5XX ? { retry5xx: Number(env.RETRY_5XX) } : {}),
     ...(env.RETRY_5XX_DELAY_MS ? { retry5xxDelayMs: Number(env.RETRY_5XX_DELAY_MS) } : {}),
+    ...(env.USAGE_TZ_OFFSET_HOURS != null ? { usageTzOffsetHours: Number(env.USAGE_TZ_OFFSET_HOURS) } : {}),
     ...(env.EMIT_CITATIONS != null ? { emitCitations: boolFrom(env.EMIT_CITATIONS, true) } : {}),
     ...(env.DEVICE_SIGNING != null ? { deviceSigning: boolFrom(env.DEVICE_SIGNING, true) } : {}),
     ...(listFromEnv(env.ALLOW_DOMAINS) ? { allowDomains: listFromEnv(env.ALLOW_DOMAINS) } : {}),

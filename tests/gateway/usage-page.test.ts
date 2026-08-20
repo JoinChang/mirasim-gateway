@@ -258,6 +258,16 @@ describe("the daily usage chart", () => {
     expect(html).toContain("minBarLength");
   });
 
+  it("labels the newest day in the configured timezone, not UTC", () => {
+    // 2026-08-20T16:09Z is already 2026-08-21 00:09 at +8, so the newest bar must
+    // read 08-21 — the bug was a UTC day boundary lagging the operator by 8h.
+    const utcEvening = Date.parse("2026-08-20T16:09:00Z");
+    const { labels } = series(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, utcEvening, 8));
+    expect(labels[13]).toBe("2026-08-21");
+    const { labels: utc } = series(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 100 }] }, utcEvening, 0));
+    expect(utc[13]).toBe("2026-08-20");
+  });
+
   it("drops the chart entirely when there is nothing to plot", () => {
     expect(renderUsagePage({ ...base, days: [] }, now)).not.toContain("<canvas");
     expect(renderUsagePage({ ...base, days: [{ day: day(0), tokens: 0 }] }, now)).not.toContain("<canvas");

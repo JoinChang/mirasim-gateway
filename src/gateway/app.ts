@@ -195,7 +195,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
   const usage = createUsageSource(
     deps.pool,
     () => deps.store.list().map((a) => a.id),
-    (sinceMs) => deps.usage.dailyTokens(sinceMs),
+    (sinceMs) => deps.usage.dailyTokens(sinceMs, cfg.usageTzOffsetHours),
     (sinceMs) => deps.usage.modelTokens(sinceMs),
   );
 
@@ -216,7 +216,7 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     const snap = await usage.get();
     if (/application\/json/.test(c.req.header("accept") ?? "") || /[?&]format=json/.test(c.req.url))
       return c.json(snap);
-    return c.html(renderUsagePage(snap), 200, {
+    return c.html(renderUsagePage(snap, Date.now(), cfg.usageTzOffsetHours), 200, {
       // A minute-old number is fine to reuse; a stale one for longer is not.
       "cache-control": "public, max-age=30",
     });

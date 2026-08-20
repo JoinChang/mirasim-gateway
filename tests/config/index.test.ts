@@ -3,6 +3,10 @@ import { loadConfig } from "../../src/config/index.js";
 
 describe("config", () => {
   it("applies defaults with empty file/env", () => {
+    const c0 = loadConfig({ fileJson: {}, env: {} });
+    expect(c0.usageTzOffsetHours).toBe(8);
+    expect(loadConfig({ fileJson: {}, env: { USAGE_TZ_OFFSET_HOURS: "-5" } }).usageTzOffsetHours).toBe(-5);
+
     const c = loadConfig({ fileJson: {}, env: {} });
     expect(c.searchProvider).toBe("firecrawl");
     expect(c.deviceSigning).toBe(false);

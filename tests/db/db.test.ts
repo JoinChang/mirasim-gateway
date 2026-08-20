@@ -31,6 +31,26 @@ describe("db client + repositories", () => {
     expect(k.findByHash("h1")?.enabled).toBe(0);
   });
 
+  it("usage.dailyTokens groups by the offset-shifted local day", () => {
+    const db = memDb();
+    const u = usageRepo(db);
+    const base = {
+      downstreamKeyId: null,
+      accountId: null,
+      dialect: "messages",
+      model: "m",
+      webSearchRequests: 0,
+      viaRelay: 0,
+      cost: null,
+      latencyMs: 0,
+      status: 200,
+    };
+    // 2026-08-20T20:00Z is 2026-08-21 04:00 at +8 → a different local day than UTC.
+    u.append({ ts: Date.parse("2026-08-20T20:00:00Z"), inputTokens: 10, outputTokens: 0, ...base });
+    expect(u.dailyTokens(0, 0).find((d) => d.day === "2026-08-20")?.tokens).toBe(10);
+    expect(u.dailyTokens(0, 8).find((d) => d.day === "2026-08-21")?.tokens).toBe(10);
+  });
+
   it("usage.dailyTokensForKey sums in+out since day start", () => {
     const db = memDb();
     const u = usageRepo(db);

@@ -124,6 +124,11 @@ const ICON_LIMITS = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rec
 /** A bar-chart glyph, inline so the page still owes nothing to a third party. */
 const ICON_DAILY = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="9" width="3" height="5.5" rx="1"/><rect x="6.5" y="5" width="3" height="9.5" rx="1"/><rect x="11.5" y="1.5" width="3" height="13" rx="1"/></svg>`;
 
+/** The YYYY-MM-DD the instant falls on in the offset timezone. */
+function dayKey(ms: number, offsetHours: number): string {
+  return new Date(ms + offsetHours * 3_600_000).toISOString().slice(0, 10);
+}
+
 /**
  * Tokens per day, drawn by Chart.js on a linear axis with a floored bar height.
  *
@@ -138,12 +143,12 @@ const ICON_DAILY = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect
  * a visible bar. So the gap means "completely nothing"; any nonzero day, however
  * small, is a floored bar.
  */
-function renderChart(days: DailyTokens[], now: number): string {
+function renderChart(days: DailyTokens[], now: number, offsetHours: number): string {
   const byDay = new Map(days.map((d) => [d.day, d.tokens]));
   const labels: string[] = [];
   const values: (number | null)[] = [];
   for (let i = DAYS - 1; i >= 0; i--) {
-    const day = new Date(now - i * 86400_000).toISOString().slice(0, 10);
+    const day = dayKey(now - i * 86400_000, offsetHours);
     labels.push(day);
     const t = byDay.get(day) ?? 0;
     values.push(t > 0 ? t : null);
@@ -233,7 +238,7 @@ function renderModels(models: ModelTokens[]): string {
  * or a per-account figure. It is served without a key, so everything on it is
  * public, and the pool's membership is not something a spend figure needs.
  */
-export function renderUsagePage(snap: UsageSnapshot, now = Date.now()): string {
+export function renderUsagePage(snap: UsageSnapshot, now = Date.now(), offsetHours = 0): string {
   const rows = snap.windows
     .map((w) => {
       const frac = w.budgetCents > 0 ? Math.min(1, w.usedCents / w.budgetCents) : 0;
@@ -296,7 +301,7 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 <main>
   <h3 class="sh">${ICON_LIMITS}Limits</h3>
 ${rows || empty}
-${renderChart(snap.days, now)}
+${renderChart(snap.days, now, offsetHours)}
 ${renderModels(snap.models)}
 </main>`;
 }
