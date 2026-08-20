@@ -49,6 +49,11 @@ python -c "import io,sys; f=sys.argv[1]; io.open('.scratch/lintcheck/'+f,'wb').w
 node node_modules/@biomejs/biome/bin/biome ci .scratch/lintcheck
 ```
 
+Copy in **every** file you changed and lint them together — biome catches lint
+faults (an unused import, `noUnusedImports`) that tsc and vitest let through, so
+narrowing the check to one file after fixing another is how a red CI slips past a
+green local run.
+
 Run it from the repo root so the root `biome.json` applies — a copy of the config
 inside the scratch tree makes biome refuse both. `--line-ending=crlf` is the
 tempting shortcut and it lies in the other direction: files holding multi-line
