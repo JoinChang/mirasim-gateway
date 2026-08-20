@@ -231,15 +231,19 @@ describe("the daily usage chart", () => {
   });
 
   it("leaves quiet days null rather than zero", () => {
-    // A logarithmic axis has nowhere to put zero, and a gap says "nothing
-    // happened" more plainly than a bar of no height.
+    // A day with no activity is a gap, not a flat zero bar — the gap says
+    // "nothing happened" more plainly. A day with a tiny but nonzero count is a
+    // real bar, floored to a visible height by minBarLength rather than by axis.
     const { values } = series(renderUsagePage({ ...base, days: [{ day: day(3), tokens: 50 }] }, now));
     expect(values[10]).toBe(50);
     expect(values.filter((v) => v !== null)).toHaveLength(1);
     expect(values).not.toContain(0);
   });
 
-  it("compresses three orders of magnitude with a labelled log axis", () => {
+  it("uses a linear axis and floors the bar height, not a log scale", () => {
+    // Three orders of magnitude apart. A linear axis would flatten the small day
+    // to an invisible sliver; minBarLength gives it a floor in pixels while the
+    // loud days keep their true, comparable heights.
     const html = renderUsagePage(
       {
         ...base,
@@ -250,7 +254,8 @@ describe("the daily usage chart", () => {
       },
       now,
     );
-    expect(html).toContain("'logarithmic'");
+    expect(html).not.toContain("'logarithmic'");
+    expect(html).toContain("minBarLength");
   });
 
   it("drops the chart entirely when there is nothing to plot", () => {

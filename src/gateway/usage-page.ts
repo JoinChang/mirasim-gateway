@@ -125,17 +125,18 @@ const ICON_LIMITS = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rec
 const ICON_DAILY = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="9" width="3" height="5.5" rx="1"/><rect x="6.5" y="5" width="3" height="9.5" rx="1"/><rect x="11.5" y="1.5" width="3" height="13" rx="1"/></svg>`;
 
 /**
- * Tokens per day, drawn by Chart.js on a logarithmic axis.
+ * Tokens per day, drawn by Chart.js on a linear axis with a floored bar height.
  *
- * Log rather than linear because the spread here is three orders of magnitude —
- * a 165M-token day next to a 137k one — and a linear axis flattens the smaller
- * days into invisible slivers. Unlike a hand-rolled square-root scale the axis
- * carries printed ticks, so the compression is visible rather than implied.
+ * The spread here is three orders of magnitude — a 165M-token day next to a 137k
+ * one — so a bare linear axis flattens the small days into invisible slivers. The
+ * fix is a pixel floor, not a scale: `minBarLength` gives every real day a
+ * minimum height while the loud days keep their true, comparable heights. A log
+ * axis did the compression too, but it distorted the comparison the chart is for.
  *
- * Quiet days are null, not zero: a log axis has no place to put zero, and a gap
- * says "nothing happened" more plainly than a bar of no height. A day-by-hour
- * heatmap was the other candidate and does not fit this data — ten of 240 cells
- * carry any tokens, so it would read as broken rather than as quiet.
+ * A day is null, not zero, only when nothing happened at all — Chart.js skips a
+ * null and leaves a true gap, whereas `minBarLength` would floor even a zero into
+ * a visible bar. So the gap means "completely nothing"; any nonzero day, however
+ * small, is a floored bar.
  */
 function renderChart(days: DailyTokens[], now: number): string {
   const byDay = new Map(days.map((d) => [d.day, d.tokens]));
@@ -149,9 +150,6 @@ function renderChart(days: DailyTokens[], now: number): string {
   }
   if (!values.some((v) => v !== null)) return "";
 
-  // No explicit floor. Dropping it a decade gave the quietest day a taller bar
-  // but flattened the difference between the loud ones, which is the comparison
-  // the chart is actually for.
   const data = JSON.stringify({ labels, values });
   return `<section class="tr">
   <h3 class="sh">${ICON_DAILY}Daily Usage</h3>
@@ -170,14 +168,14 @@ var line=cs.getPropertyValue('--line').trim(),fill=cs.getPropertyValue('--fill')
 function fmt(n){return n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n)}
 new Chart(document.getElementById('ch'),{type:'bar',
 data:{labels:d.labels.map(function(s){return s.slice(5)}),
-datasets:[{data:d.values,backgroundColor:fill,borderRadius:2,borderSkipped:false}]},
+datasets:[{data:d.values,backgroundColor:fill,borderRadius:2,borderSkipped:false,minBarLength:3}]},
 options:{responsive:true,maintainAspectRatio:false,animation:false,
 plugins:{legend:{display:false},tooltip:{displayColors:false,
 callbacks:{title:function(i){return d.labels[i[0].dataIndex]},
 label:function(c){return fmt(c.parsed.y)+' tokens'}}}},
 scales:{x:{grid:{display:false},border:{color:line},
 ticks:{color:dim,font:{size:10},maxRotation:0,autoSkipPadding:8}},
-y:{type:'logarithmic',grid:{color:line},border:{display:false},
+y:{beginAtZero:true,grid:{color:line},border:{display:false},
 ticks:{color:dim,font:{size:10},maxTicksLimit:4,callback:function(v){return fmt(v)}}}}}})
 })()`;
 }
