@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { Outcome } from "../../src/models/classify.js";
 import { reactTo } from "../../src/accounts/reaction.js";
 
 describe("reactTo", () => {
