@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:22-slim AS builder
+FROM node:24-slim AS builder
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml ./
@@ -8,7 +8,7 @@ COPY tsconfig.json tsup.config.ts drizzle.config.ts ./
 COPY src ./src
 RUN pnpm build && pnpm prune --prod
 
-FROM node:22-slim AS runner
+FROM node:24-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=8788 DATA_DIR=/data
 RUN mkdir -p /data && chown -R node:node /data
