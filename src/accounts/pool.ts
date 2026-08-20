@@ -11,6 +11,7 @@ import { callUpstream } from "../upstream/client.js";
 import type { Kind } from "../upstream/relay.js";
 import type { Semaphore } from "../upstream/sem.js";
 import { type AttemptFailure, exhaustedResponse, type Stop } from "./exhausted.js";
+import { reactTo } from "./reaction.js";
 import type { Refresher } from "./refresh.js";
 import type { AccountStore, DecryptedAccount } from "./store.js";
 import type { TicketManager } from "./ticket.js";
@@ -239,73 +240,11 @@ export function createPool(opts: {
       });
       if (req.model) opts.onOutcome?.(req.model, outcome);
 
-      // The relay's shared budget, not this account's — so the account is never
-      // cooled and never blamed for it.
-      //
-      // It used to end the call here too, on the reasoning that one pot means
-      // failing over cannot help. Restoration proved that wrong: the operator
-      // restores accounts a batch at a time, and on the first day of it one
-      // account was served while four were still refused. Walking on costs a
-      // round-trip; not walking on returns 429 while a working account sits
-      // untried.
-      if (outcome.kind === "relay_exhausted") {
-        opts.store.setFails(a.id, 0);
-        refused.add(a.id);
-        refusal = { response: resp, accountId: a.id };
-        failures.push({
-          accountId: a.id,
-          stage: "throttled",
-          status: resp.status,
-          ...ticketMissing,
-          ...(await said(resp, gh, text)),
-        });
-        continue;
-      }
-
-      // A model the relay has no deployment for is not an account problem. Cooling
-      // the pool for it would take every account offline over a model that will
-      // never work, and walking the remaining accounts only repeats the rejection —
-      // so hand the caller the relay's own error instead of burning the pool.
-      if (outcome.kind === "model_unavailable" && resp.status === 429) {
-        opts.store.setFails(a.id, 0);
-        return { response: resp, accountId: a.id };
-      }
-
-      if (outcome.kind === "account_throttled") {
-        // Read before discarding: the relay's own words are the only thing that
-        // distinguishes a quota throttle from a refusal wearing a 429.
-        failures.push({
-          accountId: a.id,
-          stage: "throttled",
-          status: resp.status,
-          ...ticketMissing,
-          ...(await said(resp, gh, text)),
-        });
-        opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
-        opts.store.setFails(a.id, a.consecutiveFails + 1);
-        continue;
-      }
-      // An entitlement refusal belongs to the account and will not lift on a
-      // retry, but it implicates neither the model nor the other accounts — a
-      // pool holding more than one plan may well hold one that is entitled, and
-      // handing this straight back would never find it. Take the account out of
-      // rotation so the next request does not pay for it again, and keep the
-      // relay's words in case none of them are entitled.
-      if (outcome.kind === "account_refused") {
-        refused.add(a.id);
-        refusal = { response: resp, accountId: a.id };
-        failures.push({
-          accountId: a.id,
-          stage: "refused",
-          status: resp.status,
-          ...ticketMissing,
-          ...(await said(resp, gh, text)),
-        });
-        opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
-        opts.store.setFails(a.id, a.consecutiveFails + 1);
-        continue;
-      }
-
+      // A retryable 5xx is handled before the reaction: it is loop state (the
+      // retry counter) and I/O (the backoff sleep), neither of which belongs in
+      // the pure reaction. Safe to check first — the relay answers 5xx only as
+      // `model_unavailable`, never as a throttle or a refusal, so nothing below
+      // is skipped by taking it here.
       if (resp.status >= 500 && fiveXX < cfg.retry5xx) {
         failures.push({
           accountId: a.id,
@@ -318,8 +257,28 @@ export function createPool(opts: {
         await sleep(cfg.retry5xxDelayMs * fiveXX);
         continue;
       }
-      opts.store.setFails(a.id, 0);
-      return { response: resp, accountId: a.id };
+
+      // What to do about the verdict — cool, blame, drop from rotation, walk on
+      // or return — is decided as data in `reactTo`; here we only apply it.
+      const reaction = reactTo(outcome);
+      if (reaction.flow === "return") {
+        opts.store.setFails(a.id, 0);
+        return { response: resp, accountId: a.id };
+      }
+      failures.push({
+        accountId: a.id,
+        stage: reaction.stage,
+        status: resp.status,
+        ...ticketMissing,
+        ...(await said(resp, gh, text)),
+      });
+      if (reaction.refused) {
+        refused.add(a.id);
+        refusal = { response: resp, accountId: a.id };
+      }
+      if (reaction.cool)
+        opts.store.setDisabledUntil(a.id, Date.now() + cooldownMsFrom(gh, a.consecutiveFails, cfg.cooldownMs));
+      opts.store.setFails(a.id, reaction.fails === "clear" ? 0 : a.consecutiveFails + 1);
     }
     // When every account was refused for the relay's own reasons, answer in the
     // relay's words rather than a summary of them: the message names the cause
