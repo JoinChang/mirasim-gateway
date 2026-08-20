@@ -14,6 +14,7 @@ import { createMetrics } from "./metrics/registry.js";
 import { createProber } from "./models/prober.js";
 import { recordOutcome } from "./models/record.js";
 import { makeSemaphore } from "./upstream/sem.js";
+import { createRelayTransport } from "./upstream/transport.js";
 import { createRecorder } from "./usage/recorder.js";
 import { makeSearch } from "./websearch/search.js";
 
@@ -30,13 +31,19 @@ export function buildRuntime(cfg: AppConfig, dbPath?: string) {
   const ticketManager = createTicketManager({ relayBase: cfg.relayBase, fetchFn: fetch, appVersion: cfg.appVersion });
   const sem = makeSemaphore(cfg.maxConcurrency);
   const modelStatus = modelStatusRepo(db);
+  const transport = createRelayTransport({
+    relayBase: cfg.relayBase,
+    appVersion: cfg.appVersion,
+    deviceSigning: cfg.deviceSigning,
+    fetchFn: fetch,
+    sem,
+  });
   const pool = createPool({
     store,
     refresher,
     ticketManager,
     config: cfg,
-    sem,
-    fetchFn: fetch,
+    transport,
     onOutcome: (model, outcome) => recordOutcome(modelStatus, model, outcome, Date.now()),
   });
   const search = makeSearch(cfg, process.env, fetch, {

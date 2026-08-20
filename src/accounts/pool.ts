@@ -7,9 +7,8 @@ import {
   relayErrorType,
   utilizationFrom,
 } from "../models/classify.js";
-import { callUpstream } from "../upstream/client.js";
 import type { Kind } from "../upstream/relay.js";
-import type { Semaphore } from "../upstream/sem.js";
+import type { RelayTransport } from "../upstream/transport.js";
 import { type AttemptFailure, exhaustedResponse, type Stop } from "./exhausted.js";
 import { reactTo } from "./reaction.js";
 import type { Refresher } from "./refresh.js";
@@ -117,8 +116,7 @@ export function createPool(opts: {
   refresher: Refresher;
   ticketManager: TicketManager;
   config: AppConfig;
-  sem: Semaphore;
-  fetchFn: typeof fetch;
+  transport: RelayTransport;
   onOutcome?: (model: string, outcome: Outcome) => void;
 }): Pool {
   const idCache = new Map<string, DeviceIdentity>();
@@ -206,13 +204,15 @@ export function createPool(opts: {
 
       let resp: Response;
       try {
-        resp = await callUpstream({ token, ticket, identity, sem: opts.sem }, req.pathname, req.body, req.kind, {
-          deviceSigning: cfg.deviceSigning,
-          appVersion: cfg.appVersion,
-          relayBase: cfg.relayBase,
-          fetchFn: opts.fetchFn,
+        resp = await opts.transport.send({
+          pathname: req.pathname,
+          kind: req.kind,
+          body: req.body,
           method: req.method,
           betas: req.betas,
+          token,
+          ticket,
+          identity,
         });
       } catch (e) {
         failures.push({ accountId: a.id, stage: "call", error: errText(e), ...ticketMissing });

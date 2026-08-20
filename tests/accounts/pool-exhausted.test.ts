@@ -5,8 +5,8 @@ import { accountStore } from "../../src/accounts/store.js";
 import { createTicketManager } from "../../src/accounts/ticket.js";
 import { loadConfig } from "../../src/config/index.js";
 import { memDb } from "../../src/db/client.js";
-import { makeSemaphore } from "../../src/upstream/sem.js";
 import { jsonResponse, mkJwt } from "../helpers/fakes.js";
+import { fakeTransport } from "../helpers/fakeTransport.js";
 
 /**
  * `setup` mirrors pool-execute.test.ts, but lets each leg of the call fail on
@@ -27,10 +27,12 @@ function setup(opts: {
   const fetchFn = (async (url: string) => {
     if (url.includes("/auth/refresh"))
       return opts.refresh?.() ?? jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) });
-    if (url.includes("/v1/device/session")) return opts.session?.() ?? jsonResponse({ ticket: "T", expiresIn: 600 });
+    return opts.session?.() ?? jsonResponse({ ticket: "T", expiresIn: 600 });
+  }) as any;
+  const { transport } = fakeTransport(() => {
     if (opts.relayThrows) throw new Error(opts.relayThrows);
     return opts.relay?.() ?? jsonResponse({ ok: true });
-  }) as any;
+  });
   const config = loadConfig({
     fileJson: {
       deviceSigning: opts.deviceSigning ?? false,
@@ -44,7 +46,7 @@ function setup(opts: {
   });
   const refresher = createRefresher({ store, loginBase: "https://login", fetchFn });
   const ticketManager = createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: config.appVersion });
-  const pool = createPool({ store, refresher, ticketManager, config, sem: makeSemaphore(4), fetchFn });
+  const pool = createPool({ store, refresher, ticketManager, config, transport });
   return { pool, store };
 }
 

@@ -1,4 +1,4 @@
-import { DROPPED_BETAS, HOP_BY_HOP } from "./relay.js";
+import { DROPPED_BETAS } from "./relay.js";
 
 /** Header values must be ASCII; percent-encode anything else (matches desktop). */
 export function sanitizeHeader(value: string): string {
@@ -12,12 +12,6 @@ export function sanitizeHeader(value: string): string {
     }
     for (const b of Buffer.from(ch, "utf8")) out += `%${b.toString(16).toUpperCase().padStart(2, "0")}`;
   }
-  return out;
-}
-
-export function stripHopByHop(h: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(h)) if (!HOP_BY_HOP.has(k.toLowerCase())) out[k.toLowerCase()] = v;
   return out;
 }
 

@@ -6,21 +6,16 @@ import { createTicketManager } from "../../src/accounts/ticket.js";
 import { loadConfig } from "../../src/config/index.js";
 import { memDb } from "../../src/db/client.js";
 import type { Outcome } from "../../src/models/classify.js";
-import { makeSemaphore } from "../../src/upstream/sem.js";
 import { jsonResponse, mkJwt } from "../helpers/fakes.js";
+import { fakeTransport } from "../helpers/fakeTransport.js";
 
 function setup(relayScript: Array<() => Response>) {
   const db = memDb();
   const store = accountStore({ db, masterKey: null });
   for (const id of ["a1", "a2", "a3"]) store.add({ id, refreshToken: `r-${id}` });
-  let relayCalls = 0;
-  const fetchFn = (async (url: string) => {
-    if (url.includes("/auth/refresh"))
-      return jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) });
-    relayCalls++;
-    const next = relayScript.shift();
-    return next ? next() : jsonResponse({ ok: true });
-  }) as any;
+  const fetchFn = (async () =>
+    jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) })) as any;
+  const { transport, calls } = fakeTransport(relayScript);
   const config = loadConfig({
     fileJson: {
       deviceSigning: false,
@@ -40,11 +35,10 @@ function setup(relayScript: Array<() => Response>) {
     refresher,
     ticketManager,
     config,
-    sem: makeSemaphore(4),
-    fetchFn,
+    transport,
     onOutcome: (model, outcome) => seen.push({ model, outcome }),
   });
-  return { pool, store, seen, relayCalls: () => relayCalls };
+  return { pool, store, seen, relayCalls: () => calls.length };
 }
 
 const lowUtil429 = () => jsonResponse({ error: "rl" }, 429, { "anthropic-ratelimit-unified-7d-utilization": "0.004" });

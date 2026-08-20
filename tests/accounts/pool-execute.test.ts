@@ -5,27 +5,24 @@ import { accountStore } from "../../src/accounts/store.js";
 import { createTicketManager } from "../../src/accounts/ticket.js";
 import { loadConfig } from "../../src/config/index.js";
 import { memDb } from "../../src/db/client.js";
-import { makeSemaphore } from "../../src/upstream/sem.js";
 import { jsonResponse, mkJwt } from "../helpers/fakes.js";
+import { fakeTransport } from "../helpers/fakeTransport.js";
 
 function setup(relayScript: Array<() => Response>) {
   const db = memDb();
   const store = accountStore({ db, masterKey: null });
   store.add({ id: "a1", refreshToken: "r1" });
   store.add({ id: "a2", refreshToken: "r2" });
-  const fetchFn = (async (url: string) => {
-    if (url.includes("/auth/refresh"))
-      return jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) });
-    const next = relayScript.shift();
-    return next ? next() : jsonResponse({ ok: true });
-  }) as any;
+  const fetchFn = (async () =>
+    jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) })) as any;
+  const { transport } = fakeTransport(relayScript);
   const config = loadConfig({
     fileJson: { deviceSigning: false, cooldownMs: 40, maxWaitMs: 300, maxAttempts: 6, retry5xx: 2, retry5xxDelayMs: 5 },
     env: {},
   });
   const refresher = createRefresher({ store, loginBase: "https://login", fetchFn });
   const ticketManager = createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: config.appVersion });
-  const pool = createPool({ store, refresher, ticketManager, config, sem: makeSemaphore(4), fetchFn });
+  const pool = createPool({ store, refresher, ticketManager, config, transport });
   return { pool, store };
 }
 

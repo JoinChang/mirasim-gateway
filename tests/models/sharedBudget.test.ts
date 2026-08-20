@@ -7,8 +7,8 @@ import { loadConfig } from "../../src/config/index.js";
 import { memDb } from "../../src/db/client.js";
 import { explainRelayError } from "../../src/gateway/relayErrors.js";
 import { classifyOutcome, relayErrorType } from "../../src/models/classify.js";
-import { makeSemaphore } from "../../src/upstream/sem.js";
 import { jsonResponse, mkJwt } from "../helpers/fakes.js";
+import { fakeTransport } from "../helpers/fakeTransport.js";
 
 const hdrs =
   (h: Record<string, string>) =>
@@ -62,18 +62,17 @@ describe("shared-budget 429", () => {
     const db = memDb();
     const store = accountStore({ db, masterKey: null });
     for (let i = 0; i < 5; i++) store.add({ id: `a${i}`, refreshToken: `r${i}` });
-    let relayCalls = 0;
-    const fetchFn = (async (url: string) => {
-      if (url.includes("/auth/refresh"))
-        return jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) });
-      relayCalls++;
-      // Only the fourth account has been let back in.
-      if (relayCalls === 4) return jsonResponse({ ok: true }, 200);
-      return jsonResponse(EXHAUSTED, 429, {
-        "retry-after": "3600",
-        "anthropic-ratelimit-unified-7d-utilization": "0.1996",
-      });
-    }) as any;
+    const fetchFn = (async () =>
+      jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) })) as any;
+    // Only the fourth account has been let back in.
+    const { transport, calls } = fakeTransport((n) =>
+      n === 4
+        ? jsonResponse({ ok: true }, 200)
+        : jsonResponse(EXHAUSTED, 429, {
+            "retry-after": "3600",
+            "anthropic-ratelimit-unified-7d-utilization": "0.1996",
+          }),
+    );
     const config = loadConfig({
       fileJson: { deviceSigning: false, cooldownMs: 40, maxWaitMs: 300, maxAttempts: 8 },
       env: {},
@@ -83,8 +82,7 @@ describe("shared-budget 429", () => {
       refresher: createRefresher({ store, loginBase: "https://login", fetchFn }),
       ticketManager: createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: config.appVersion }),
       config,
-      sem: makeSemaphore(4),
-      fetchFn,
+      transport,
     });
 
     const { response, accountId } = await pool.execute({
@@ -94,7 +92,7 @@ describe("shared-budget 429", () => {
     });
     expect(response.status).toBe(200);
     expect(accountId).toBeTruthy();
-    expect(relayCalls).toBe(4);
+    expect(calls.length).toBe(4);
     // The three that refused are still clean — they were not at fault.
     expect(store.list().every((a) => a.consecutiveFails === 0)).toBe(true);
     expect(store.list().every((a) => a.disabledUntil <= Date.now())).toBe(true);
@@ -104,16 +102,14 @@ describe("shared-budget 429", () => {
     const db = memDb();
     const store = accountStore({ db, masterKey: null });
     for (let i = 0; i < 5; i++) store.add({ id: `a${i}`, refreshToken: `r${i}` });
-    let relayCalls = 0;
-    const fetchFn = (async (url: string) => {
-      if (url.includes("/auth/refresh"))
-        return jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) });
-      relayCalls++;
-      return jsonResponse(EXHAUSTED, 429, {
+    const fetchFn = (async () =>
+      jsonResponse({ access_token: mkJwt({ exp: Math.floor(Date.now() / 1000) + 3600 }) })) as any;
+    const { transport, calls } = fakeTransport(() =>
+      jsonResponse(EXHAUSTED, 429, {
         "retry-after": "3600",
         "anthropic-ratelimit-unified-7d-utilization": "0.1996",
-      });
-    }) as any;
+      }),
+    );
     const config = loadConfig({
       fileJson: { deviceSigning: false, cooldownMs: 40, maxWaitMs: 300, maxAttempts: 8 },
       env: {},
@@ -123,8 +119,7 @@ describe("shared-budget 429", () => {
       refresher: createRefresher({ store, loginBase: "https://login", fetchFn }),
       ticketManager: createTicketManager({ relayBase: "https://relay", fetchFn, appVersion: config.appVersion }),
       config,
-      sem: makeSemaphore(4),
-      fetchFn,
+      transport,
     });
 
     const { response, accountId } = await pool.execute({
@@ -136,7 +131,7 @@ describe("shared-budget 429", () => {
     expect(response.status).toBe(429);
     expect(((await response.json()) as any).error.type).toBe("credit_exhausted_shared");
     expect(accountId).toBeTruthy();
-    expect(relayCalls).toBe(5); // walked all five rather than stranding a possible survivor
+    expect(calls.length).toBe(5); // walked all five rather than stranding a possible survivor
     expect(store.list().every((a) => a.disabledUntil <= Date.now())).toBe(true);
     expect(store.list().every((a) => a.consecutiveFails === 0)).toBe(true);
   });
