@@ -40,10 +40,11 @@ export function usageRepo(db: DB) {
       };
     },
     /**
-     * Tokens per UTC day since sinceMs, oldest first, days with no traffic
-     * omitted. Rows carrying no tokens are excluded rather than counted as a
-     * zero-token day: the internal reachability probes land here too, and a
-     * probe is not a day of use.
+     * Tokens per day since sinceMs, oldest first, days with no traffic omitted.
+     * Rows carrying no tokens are excluded so a day of nothing-but-failures (a
+     * 429 or an empty response is recorded with zero tokens) does not draw as a
+     * zero-height bar. Internal probes never reach here — only gateway requests
+     * are recorded — so every row is real downstream traffic either way.
      */
     dailyTokens(sinceMs: number, offsetHours = 0): { day: string; tokens: number }[] {
       // Bucket by the operator's local day, not UTC: `date(..., '+8 hours')`
