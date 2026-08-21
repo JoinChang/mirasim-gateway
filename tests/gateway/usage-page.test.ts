@@ -498,6 +498,20 @@ describe("the traffic row", () => {
     expect(html).toContain('class="spk-d"');
   });
 
+  it("draws the end dot so it stays circular under the stretched viewBox", () => {
+    // The sparkline SVG uses preserveAspectRatio="none", so x and y scale
+    // unequally — a plain <circle r> renders as an ellipse. The dot must be a
+    // scale-invariant marker: a round-capped, non-scaling stroke instead.
+    const statsByDay = [
+      { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 },
+    ];
+    const html = renderUsagePage(mkSnap(now, { "7d": { statsByDay } }), now);
+    expect(html).not.toMatch(/<circle[^>]*class="spk-d"/);
+    expect(html).toMatch(/<(?:path|line)[^>]*class="spk-d"/);
+    expect(html).toMatch(/\.spk-d\{[^}]*vector-effect:non-scaling-stroke/);
+    expect(html).toMatch(/\.spk-d\{[^}]*stroke-linecap:round/);
+  });
+
   it("renders a panel per range, 7d visible and the others hidden", () => {
     const statsByDay = [
       { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 },
