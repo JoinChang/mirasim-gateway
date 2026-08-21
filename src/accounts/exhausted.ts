@@ -29,9 +29,10 @@ export interface AttemptFailure {
 /** Why the attempt loop stopped, which is not the same as why attempts failed. */
 export type Stop = "no_accounts" | "deadline" | "max_attempts";
 
-const shortId = (id: string) => id.slice(0, 16);
-
-/** Cap on the Retry-After we hint to callers: come back soon, not in an hour. */
+const shortId = (id: string) => id.slice(0, 16);
+
+/** Cap on the Retry-After we hint to callers: come back soon, not in an hour. */
+
 const RETRY_AFTER_CAP_S = 10;
 
 function describe(f: AttemptFailure): string {
