@@ -1,3 +1,4 @@
+import vm from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
   createUsageSource,
@@ -323,6 +324,26 @@ describe("the token usage chart", () => {
     >;
   const withDays = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, at = now, off = 0) =>
     renderUsagePage(mkSnap(now, over), at, off);
+  const inlineScript = (html: string) => /<script>([\s\S]*?)<\/script>/.exec(html)![1]!;
+
+  it("emits a syntactically valid inline script, chart or no chart", () => {
+    // vm.Script compiles the body without running it, so a malformed IIFE (a
+    // dropped brace) is caught here without touching document or Chart. String
+    // assertions alone never parse the script, which is how a broken one shipped.
+    const withChart = inlineScript(withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } }));
+    expect(() => new vm.Script(withChart)).not.toThrow();
+    // No token data → no chart embedded → the toggle handler alone must parse.
+    const trafficOnly = renderUsagePage(
+      mkSnap(now, {
+        "7d": {
+          statsByDay: [{ day: day(0), requests: 3, ok: 3, inputTokens: 9, cachedInputTokens: 3, latencyMsTotal: 30 }],
+        },
+      }),
+      now,
+    );
+    expect(trafficOnly).not.toContain("var CHART=");
+    expect(() => new vm.Script(inlineScript(trafficOnly))).not.toThrow();
+  });
 
   it("embeds one dataset per range: 7 daily, 30 daily, 24 hourly points", () => {
     const c = chartData(withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } }));
