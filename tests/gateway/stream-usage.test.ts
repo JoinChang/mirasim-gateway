@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { createUsageScanner } from "../../src/gateway/streamUsage.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createUsageScanner, meterStream, type StreamUsage } from "../../src/gateway/streamUsage.js";
 
 const sse = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
@@ -79,5 +79,94 @@ describe("createUsageScanner", () => {
     );
     s.push(sse("message_delta", { type: "message_delta", usage: { output_tokens: 5 } }));
     expect(s.result()).toEqual({ inputTokens: 4813, outputTokens: 5, cachedInputTokens: 4804 });
+  });
+});
+
+describe("meterStream heartbeat", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // A source we can feed and close by hand, to control when the "relay" is silent.
+  function controllable() {
+    let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        ctrl = c;
+      },
+    });
+    return { stream, push: (s: string) => ctrl.enqueue(enc.encode(s)), close: () => ctrl.close() };
+  }
+
+  function collect(rs: ReadableStream<Uint8Array>) {
+    const out: string[] = [];
+    const dec = new TextDecoder();
+    const reader = rs.getReader();
+    const done = (async () => {
+      for (;;) {
+        const r = await reader.read();
+        if (r.done) break;
+        out.push(dec.decode(r.value));
+      }
+    })();
+    return { out, done };
+  }
+
+  it("injects a `: ping` comment once the relay goes silent past the interval", async () => {
+    vi.useFakeTimers();
+    const src = controllable();
+    const usage: StreamUsage[] = [];
+    const { out, done } = collect(meterStream(src.stream, (u) => usage.push(u), 15_000));
+
+    src.push(sse("message_start", { type: "message_start", message: { usage: { input_tokens: 1000 } } }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(out.join("")).not.toContain(": ping"); // still flowing → no ping yet
+
+    await vi.advanceTimersByTimeAsync(15_000); // silence past the interval
+    expect(out.join("")).toContain(": ping");
+
+    src.close();
+    await done;
+    // The ping bypasses metering entirely — the token count is untouched.
+    expect(usage[0]!.inputTokens).toBe(1000);
+  });
+
+  it("does not ping while chunks keep arriving within the interval", async () => {
+    vi.useFakeTimers();
+    const src = controllable();
+    const { out, done } = collect(meterStream(src.stream, () => {}, 15_000));
+
+    for (let i = 0; i < 4; i++) {
+      src.push(sse("message_delta", { type: "message_delta", usage: { output_tokens: i } }));
+      await vi.advanceTimersByTimeAsync(10_000); // each < interval, and each resets the timer
+    }
+    expect(out.join("")).not.toContain(": ping");
+
+    src.close();
+    await done;
+  });
+
+  it("stops pinging once the stream ends", async () => {
+    vi.useFakeTimers();
+    const src = controllable();
+    const { out, done } = collect(meterStream(src.stream, () => {}, 15_000));
+    src.push(sse("message_start", { type: "message_start", message: { usage: { input_tokens: 1 } } }));
+    src.close();
+    await done;
+    const before = out.join("");
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(out.join("")).toBe(before); // no pings after the stream closed
+  });
+
+  it("stays inert when the heartbeat is disabled", async () => {
+    vi.useFakeTimers();
+    const src = controllable();
+    const { out, done } = collect(meterStream(src.stream, () => {}, 0));
+    src.push(sse("message_start", { type: "message_start", message: { usage: { input_tokens: 1 } } }));
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(out.join("")).not.toContain(": ping");
+    src.close();
+    await done;
   });
 });

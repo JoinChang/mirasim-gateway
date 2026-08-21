@@ -83,26 +83,68 @@ export function createUsageScanner() {
   };
 }
 
+/** An SSE comment frame — ignored by clients, never parsed as data. */
+const PING = new TextEncoder().encode(": ping\n\n");
+
 /**
  * Pass a body through untouched while metering it. `onDone` fires once the
  * upstream finishes, including when the client disconnects early.
+ *
+ * While the upstream is silent, a `: ping` comment is emitted every
+ * `heartbeatMs` to keep the connection warm through Cloudflare's (and any
+ * reverse proxy's) idle timeout, which would otherwise cut a long stream — a
+ * big prefill or an extended-thinking pause — mid-response. Bedrock via the
+ * relay sends no ping of its own (measured: zero keepalive frames), so this is
+ * the only keepalive on the wire. The `:` lines are SSE comments, so the client
+ * ignores them and they bypass the scanner — metering is untouched. Pass
+ * `heartbeatMs = 0` to disable.
  */
 export function meterStream(
   body: ReadableStream<Uint8Array>,
   onDone: (u: StreamUsage) => void,
+  heartbeatMs = 15_000,
 ): ReadableStream<Uint8Array> {
   const scanner = createUsageScanner();
   const decoder = new TextDecoder();
   let settled = false;
+  let ctrl: TransformStreamDefaultController<Uint8Array> | null = null;
+  let hb: ReturnType<typeof setTimeout> | null = null;
+
+  const disarm = () => {
+    if (hb) {
+      clearTimeout(hb);
+      hb = null;
+    }
+  };
+  // Re-armed on every real chunk, so a ping only fires after a genuine gap.
+  const arm = () => {
+    if (heartbeatMs <= 0) return;
+    disarm();
+    hb = setTimeout(() => {
+      try {
+        ctrl?.enqueue(PING);
+        arm();
+      } catch {
+        // The readable side is gone — stop rather than ping a dead stream.
+        disarm();
+      }
+    }, heartbeatMs);
+  };
   const finish = () => {
     if (settled) return;
     settled = true;
+    disarm();
     onDone(scanner.result());
   };
 
   return body.pipeThrough(
     new TransformStream<Uint8Array, Uint8Array>({
+      start(controller) {
+        ctrl = controller;
+        arm();
+      },
       transform(chunk, controller) {
+        arm();
         try {
           scanner.push(decoder.decode(chunk, { stream: true }));
         } catch {

@@ -50,11 +50,26 @@ async function cmdServe(cfg: AppConfig) {
   if (cfg.host !== "127.0.0.1" && cfg.host !== "localhost" && rt.keys.count() === 0)
     log("⚠️  bound to non-loopback host with NO downstream keys (open mode). Set PROXY keys before exposing.");
   if (cfg.modelProbeEnabled) rt.prober.start();
-  serve({ fetch: rt.app.fetch, hostname: cfg.host, port: cfg.port }, (info) => {
+  const server = serve({ fetch: rt.app.fetch, hostname: cfg.host, port: cfg.port }, (info) => {
     log(
       `mirasim-gateway http://${cfg.host}:${info.port}  accounts=${accts.length} provider=${cfg.searchProvider} signing=${cfg.deviceSigning ? "on" : "off"} auth=${rt.keys.count() > 0 ? "on" : "off"} probe=${cfg.modelProbeEnabled ? `${Math.round(cfg.modelProbeIntervalMs / 1000)}s` : "off"}`,
     );
   });
+  // Drain on shutdown: `docker compose up -d` recreates the container with a
+  // SIGTERM. Stop accepting new connections but let in-flight streams finish, so
+  // a deploy no longer cuts a response mid-flight — it used to SIGKILL after the
+  // grace period (exitCode 137). A hard exit backstops the drain in case a stream
+  // outlives the window; raise compose `stop_grace_period` to give it longer.
+  let closing = false;
+  const shutdown = (sig: string) => {
+    if (closing) return;
+    closing = true;
+    log(`${sig} received — draining in-flight requests`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 20_000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 async function cmdModelsStatus(cfg: AppConfig) {
