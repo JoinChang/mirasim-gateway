@@ -229,18 +229,13 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
       const { windows, serving, total, takenAt } = snap;
       return c.json({ windows, serving, total, takenAt, range, ...snap.byRange[range] });
     }
-    // The page's own switching and auto-refresh fetch section HTML per range and
-    // swap it in, so each section carries its own `?<section>=<range>` param.
+    // The page pre-renders all ranges; switching is client-side. `?fragment=1`
+    // returns just the swappable region — what auto-refresh polls for fresh data.
     const now = Date.now();
-    const ranges = {
-      tokens: parseRange(c.req.query("tokens")),
-      traffic: parseRange(c.req.query("traffic")),
-      models: parseRange(c.req.query("models")),
-    };
     const headers = { "cache-control": "public, max-age=30" };
     if (c.req.query("fragment") !== undefined)
-      return c.html(renderSections(snap, now, cfg.usageTzOffsetHours, ranges), 200, headers);
-    return c.html(renderUsagePage(snap, now, cfg.usageTzOffsetHours, ranges), 200, headers);
+      return c.html(renderSections(snap, now, cfg.usageTzOffsetHours), 200, headers);
+    return c.html(renderUsagePage(snap, now, cfg.usageTzOffsetHours), 200, headers);
   });
 
   app.get("/metrics", async (c) => {

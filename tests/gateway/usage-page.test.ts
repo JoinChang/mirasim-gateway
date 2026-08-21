@@ -6,7 +6,6 @@ import {
   parseRange,
   renderSections,
   renderUsagePage,
-  type SectionRanges,
   type UsageSnapshot,
 } from "../../src/gateway/usage-page.js";
 import { fakePool, R } from "../helpers/fakePool.js";
@@ -43,9 +42,6 @@ const mkSnap = (
   byRange: { "24h": rd(over["24h"]), "7d": rd(over["7d"]), "30d": rd(over["30d"]) },
   ...extra,
 });
-
-// Range selections; every section defaults to 7d.
-const R7: SectionRanges = { tokens: "7d", traffic: "7d", models: "7d" };
 
 describe("createUsageSource", () => {
   it("caches, so a page nobody has to authenticate for cannot be turned into relay load", async () => {
@@ -95,11 +91,10 @@ describe("createUsageSource", () => {
     );
     const t = Date.now();
     await Promise.all(Array.from({ length: 10 }, () => src.get(t)));
-    // Two calls for one account — /v1/models then /v1/limits — not twenty.
     expect(requests.length).toBe(2);
   });
 
-  it("builds every range in one go so any fragment is one cheap DB read, no relay", async () => {
+  it("builds every range in one go so the client can switch without a request", async () => {
     const { pool } = fakePool({ respond });
     const src = createUsageSource(
       pool,
@@ -146,8 +141,6 @@ describe("createUsageSource", () => {
     return src.get().then((first) => {
       broken = true;
       return src.get(Date.now() + 10_000).then((second) => {
-        // The stale cached account part is served rather than a 500 — same
-        // takenAt and serving count as before.
         expect(second.takenAt).toBe(first.takenAt);
         expect(second.serving).toBe(first.serving);
       });
@@ -210,13 +203,11 @@ describe("renderUsagePage (the shell)", () => {
 
   it("carries an auto-refresh toggle on the Limits header, above the swap region", () => {
     const html = renderUsagePage(snap);
-    expect(html).toContain('id="ar"'); // the auto-refresh checkbox
+    expect(html).toContain('id="ar"');
     expect(html).toContain("Auto-refresh");
-    // The toggle sits on the right of the Limits title (same header row)...
     expect(html).toMatch(/Limits<\/span><label class="ar-l"/);
-    // ...and above #u, so an auto-refresh swap never replaces it.
     expect(html.indexOf("Auto-refresh")).toBeLessThan(html.indexOf('<div id="u"'));
-    expect(html).toMatch(/<div id="u"[^>]*data-tokens="7d"/); // the swap target, seeded with its ranges
+    expect(html).toMatch(/<div id="u"[^>]*data-tokens="7d"/);
   });
 
   it("says when a reset is only the first of several", () => {
@@ -292,13 +283,6 @@ describe("renderUsagePage (the shell)", () => {
 describe("renderSections (the fragment)", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
-  const hour = (n: number) => new Date(now - n * 3600_000).toISOString().slice(0, 13);
-  const cd = (html: string) =>
-    JSON.parse(/<script type="application\/json" id="cd">(.*?)<\/script>/.exec(html)![1]!) as {
-      labels: string[];
-      values: (number | null)[];
-      bucket: string;
-    };
 
   it("returns inner HTML with no document shell, controller, or the persistent toggle", () => {
     const frag = renderSections(
@@ -315,29 +299,19 @@ describe("renderSections (the fragment)", () => {
     );
     expect(frag).not.toContain("<!doctype");
     expect(frag).not.toContain("<html");
-    expect(frag).not.toContain("<head");
     expect(frag).not.toContain('src="/usage/chart.js"'); // the shell owns the library tag
     expect(frag).not.toContain("addEventListener"); // and the controller
     expect(frag).not.toContain("Auto-refresh"); // and the persistent toggle
     expect(frag).toContain('class="w"'); // but the limits cards ARE here — they refresh
     expect(frag).toContain("Token Usage");
   });
-
-  it("renders the token section at the requested range", () => {
-    const over = {
-      "24h": { days: [{ day: hour(0), tokens: 5 }] },
-      "7d": { days: [{ day: day(0), tokens: 100 }] },
-    };
-    const s = cd(renderSections(mkSnap(now, over), now, 0, { tokens: "24h", traffic: "7d", models: "7d" }));
-    expect(s.bucket).toBe("hour");
-    expect(s.labels).toHaveLength(24);
-  });
 });
 
 describe("the time-range switchers", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
-  const full = (ranges = R7) =>
+  const controllerJs = (html: string) => /<script>([\s\S]*?)<\/script>/.exec(html)![1]!;
+  const full = () =>
     renderUsagePage(
       mkSnap(now, {
         "7d": {
@@ -347,17 +321,8 @@ describe("the time-range switchers", () => {
             { day: day(0), requests: 5, ok: 5, inputTokens: 100, cachedInputTokens: 50, latencyMsTotal: 500 },
           ],
         },
-        "24h": {
-          days: [{ day: day(0), tokens: 100 }],
-          models: [{ model: "m", tokens: 100 }],
-          statsByDay: [
-            { day: day(0), requests: 5, ok: 5, inputTokens: 100, cachedInputTokens: 50, latencyMsTotal: 500 },
-          ],
-        },
       }),
       now,
-      0,
-      ranges,
     );
 
   it("gives each switchable section its own switcher, none on Limits", () => {
@@ -368,11 +333,19 @@ describe("the time-range switchers", () => {
     expect(html).not.toContain('data-sw="limits"');
   });
 
-  it("marks the section's currently-selected range, per section", () => {
-    const html = full({ tokens: "24h", traffic: "7d", models: "7d" });
-    // The tokens switcher shows 24h active; the others show 7d.
-    expect(html).toMatch(/data-sw="tokens">.*?data-range="24h" class="on"/s);
-    expect((html.match(/data-range="7d" class="on"/g) ?? []).length).toBe(2);
+  it("starts every switcher on 7d", () => {
+    const html = full();
+    expect((html.match(/data-range="7d" class="on"/g) ?? []).length).toBe(3);
+    expect(html).not.toContain('data-range="24h" class="on"');
+  });
+
+  it("switches client-side (a range click toggles locally, never fetches)", () => {
+    const js = controllerJs(full());
+    // The click handler updates the section's range and re-applies locally.
+    expect(js).toContain("data-range');apply()");
+    // The only fetch is the auto-refresh poll, not the switch.
+    expect(js).toContain("setInterval(refresh,30000)");
+    expect(js).toContain("fetch('/usage?fragment=1");
   });
 });
 
@@ -381,45 +354,38 @@ describe("the token usage chart", () => {
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
   const hour = (n: number) => new Date(now - n * 3600_000).toISOString().slice(0, 13);
   const cd = (html: string) =>
-    JSON.parse(/<script type="application\/json" id="cd">(.*?)<\/script>/.exec(html)![1]!) as {
-      labels: string[];
-      values: (number | null)[];
-      bucket: string;
-    };
+    JSON.parse(/<script type="application\/json" id="cd">(.*?)<\/script>/.exec(html)![1]!) as Record<
+      "24h" | "7d" | "30d",
+      { labels: string[]; values: (number | null)[]; bucket: string }
+    >;
   const controllerJs = (html: string) => /<script>([\s\S]*?)<\/script>/.exec(html)![1]!;
-  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, ranges = R7, at = now, off = 0) =>
-    renderUsagePage(mkSnap(now, over), at, off, ranges);
+  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, at = now, off = 0) =>
+    renderUsagePage(mkSnap(now, over), at, off);
 
-  it("embeds only the selected range's series (24h hourly, 7d/30d daily)", () => {
-    const over = {
-      "24h": { days: [{ day: hour(0), tokens: 5 }] },
-      "7d": { days: [{ day: day(0), tokens: 100 }] },
-      "30d": { days: [{ day: day(0), tokens: 100 }] },
-    };
-    const c7 = cd(page(over));
-    expect(c7.labels).toHaveLength(7);
-    expect(c7.bucket).toBe("day");
-    const c24 = cd(page(over, { tokens: "24h", traffic: "7d", models: "7d" }));
-    expect(c24.labels).toHaveLength(24);
-    expect(c24.bucket).toBe("hour");
-    expect(c24.labels[23]).toBe(hour(0));
-    const c30 = cd(page(over, { tokens: "30d", traffic: "7d", models: "7d" }));
-    expect(c30.labels).toHaveLength(30);
+  it("embeds all three ranges so switching is a local redraw (7 daily / 30 daily / 24 hourly)", () => {
+    const c = cd(page({ "7d": { days: [{ day: day(0), tokens: 100 }] } }));
+    expect(c["7d"].labels).toHaveLength(7);
+    expect(c["7d"].bucket).toBe("day");
+    expect(c["30d"].labels).toHaveLength(30);
+    expect(c["24h"].labels).toHaveLength(24);
+    expect(c["24h"].bucket).toBe("hour");
+    expect(c["24h"].labels.every((l) => l.includes("T"))).toBe(true);
+    expect(c["24h"].labels[23]).toBe(hour(0));
   });
 
   it("labels the 7d axis oldest to newest, in the configured timezone", () => {
     const utcEvening = Date.parse("2026-08-20T16:09:00Z");
-    const c = cd(page({ "7d": { days: [{ day: day(0), tokens: 100 }] } }, R7, utcEvening, 8));
-    expect(c.labels[6]).toBe("2026-08-21");
-    expect(c.labels[0]).toBe("2026-08-15");
+    const c = cd(page({ "7d": { days: [{ day: day(0), tokens: 100 }] } }, utcEvening, 8));
+    expect(c["7d"].labels[6]).toBe("2026-08-21");
+    expect(c["7d"].labels[0]).toBe("2026-08-15");
   });
 
   it("leaves quiet buckets null rather than zero", () => {
     const c = cd(page({ "7d": { days: [{ day: day(3), tokens: 50 }] } }));
-    expect(c.values).toHaveLength(7);
-    expect(c.values[3]).toBe(50);
-    expect(c.values.filter((v) => v !== null)).toHaveLength(1);
-    expect(c.values).not.toContain(0);
+    expect(c["7d"].values).toHaveLength(7);
+    expect(c["7d"].values[3]).toBe(50);
+    expect(c["7d"].values.filter((v) => v !== null)).toHaveLength(1);
+    expect(c["7d"].values).not.toContain(0);
   });
 
   it("uses a linear axis and floors the bar height, not a log scale", () => {
@@ -447,8 +413,6 @@ describe("the token usage chart", () => {
   });
 
   it("emits a syntactically valid controller script, with a chart and without", () => {
-    // vm.Script compiles the body without running it, catching a malformed IIFE
-    // (a dropped brace) without touching document, fetch, or Chart.
     expect(() => new vm.Script(controllerJs(page({ "7d": { days: [{ day: day(0), tokens: 100 }] } })))).not.toThrow();
     expect(() => new vm.Script(controllerJs(page({})))).not.toThrow();
   });
@@ -457,21 +421,27 @@ describe("the token usage chart", () => {
 describe("the model list", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
   const m = (model: string, tokens: number) => ({ model, tokens });
-  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, ranges = R7) =>
-    renderUsagePage(mkSnap(now, over), now, 0, ranges);
+  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>) => renderUsagePage(mkSnap(now, over), now);
 
-  it("shows the selected range's split, ordered by weight with magnitudes", () => {
-    const html = page({ "7d": { models: [m("opus", 150_932_228), m("sonnet", 22_504_288)] } });
+  it("pre-renders a panel per range, 7d visible and the others hidden", () => {
+    const html = page({
+      "24h": { models: [m("recent", 5)] },
+      "7d": { models: [m("opus", 150_932_228), m("sonnet", 22_504_288)] },
+      "30d": { models: [m("older", 9)] },
+    });
     expect(html).toContain("Models");
+    expect(html).toMatch(/<div class="rp" data-range="7d">/); // default visible
+    expect(html).toMatch(/<div class="rp" data-range="24h" hidden>/);
+    expect(html).toMatch(/<div class="rp" data-range="30d" hidden>/);
+    expect(html).toContain("150.9M"); // 7d content present
+    expect(html).toContain("recent"); // 24h content also shipped (hidden)
+  });
+
+  it("orders by weight and shows magnitudes", () => {
+    const html = page({ "7d": { models: [m("opus", 150_932_228), m("sonnet", 22_504_288)] } });
     expect(html.indexOf("opus")).toBeLessThan(html.indexOf("sonnet"));
     expect(html).toContain("150.9M");
     expect(html).toContain("22.5M");
-  });
-
-  it("renders the range the switcher points at", () => {
-    const over = { "24h": { models: [m("recent", 5)] }, "7d": { models: [m("opus", 999)] } };
-    expect(page(over, { tokens: "7d", traffic: "7d", models: "24h" })).toContain("recent");
-    expect(page(over, { tokens: "7d", traffic: "7d", models: "24h" })).not.toContain("opus");
   });
 
   it("sizes each bar by share of the total", () => {
@@ -502,10 +472,9 @@ describe("the traffic row", () => {
   const now = Date.parse("2026-08-20T12:00:00Z");
   const day0 = new Date(now).toISOString().slice(0, 10);
   const stat = { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 };
-  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, ranges = R7) =>
-    renderUsagePage(mkSnap(now, over), now, 0, ranges);
+  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>) => renderUsagePage(mkSnap(now, over), now);
 
-  it("shows the four totals, a title, and a sparkline per metric", () => {
+  it("shows the four totals, a title, and a sparkline per metric in the visible range", () => {
     const html = page({ "7d": { statsByDay: [stat] } });
     expect(html).toContain("Traffic");
     expect(html).toContain("Requests");
@@ -514,15 +483,20 @@ describe("the traffic row", () => {
     expect(html).toMatch(/60\s*%/);
     expect(html).toMatch(/500\s*ms/);
     expect(html).toContain('class="spk"');
-    expect((html.match(/class="spk-l"/g) ?? []).length).toBe(4); // one line per metric, selected range only
+    // Only the visible 7d panel has data; 24h/30d panels are empty notes.
+    expect((html.match(/class="spk-l"/g) ?? []).length).toBe(4);
     expect(html).toContain('class="spk-a"');
     expect(html).toContain('class="spk-d"');
   });
 
+  it("pre-renders a panel per range, 7d visible and the others hidden", () => {
+    const html = page({ "7d": { statsByDay: [stat] } });
+    expect(html).toMatch(/<div class="rp" data-range="7d">/);
+    expect(html).toMatch(/<div class="rp" data-range="24h" hidden>/);
+    expect(html).toMatch(/<div class="rp" data-range="30d" hidden>/);
+  });
+
   it("draws the end dot so it stays circular under the stretched viewBox", () => {
-    // The sparkline SVG uses preserveAspectRatio="none", so x and y scale
-    // unequally — a plain <circle r> renders as an ellipse. The dot must be a
-    // scale-invariant marker: a round-capped, non-scaling stroke instead.
     const html = page({ "7d": { statsByDay: [stat] } });
     expect(html).not.toMatch(/<circle[^>]*class="spk-d"/);
     expect(html).toMatch(/<(?:path|line)[^>]*class="spk-d"/);
