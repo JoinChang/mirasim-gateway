@@ -10,6 +10,7 @@ export interface UsageInput {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
   webSearchRequests: number;
   status: number;
   viaRelay: boolean;

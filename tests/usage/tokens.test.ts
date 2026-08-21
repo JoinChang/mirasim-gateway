@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { totalInputTokens, totalOutputTokens, usageTotalsFrom } from "../../src/usage/tokens.js";
+import { cachedInputTokens, totalInputTokens, totalOutputTokens, usageTotalsFrom } from "../../src/usage/tokens.js";
 
 describe("totalInputTokens", () => {
   // Real numbers observed against the relay: a 4804-token cached system prompt
@@ -42,12 +42,27 @@ describe("totalOutputTokens", () => {
   });
 });
 
+describe("cachedInputTokens", () => {
+  it("reads Anthropic cache_read_input_tokens — the part served from cache", () => {
+    expect(
+      cachedInputTokens({ input_tokens: 9, cache_creation_input_tokens: 100, cache_read_input_tokens: 4804 }),
+    ).toBe(4804);
+  });
+  it("reads OpenAI prompt_tokens_details.cached_tokens", () => {
+    expect(cachedInputTokens({ prompt_tokens: 500, prompt_tokens_details: { cached_tokens: 320 } })).toBe(320);
+  });
+  it("is zero when nothing was cached or the usage is absent", () => {
+    expect(cachedInputTokens({ input_tokens: 9 })).toBe(0);
+    expect(cachedInputTokens(null)).toBe(0);
+  });
+});
+
 describe("usageTotalsFrom", () => {
   it("counts cached input on a complete response body", () => {
     const u = usageTotalsFrom({
       usage: { input_tokens: 9, cache_creation_input_tokens: 0, cache_read_input_tokens: 4804, output_tokens: 5 },
     });
-    expect(u).toEqual({ inputTokens: 4813, outputTokens: 5, webSearchRequests: 0 });
+    expect(u).toEqual({ inputTokens: 4813, outputTokens: 5, cachedInputTokens: 4804, webSearchRequests: 0 });
   });
 
   it("reads the Anthropic web search count", () => {
@@ -59,6 +74,11 @@ describe("usageTotalsFrom", () => {
   });
 
   it("reports zeros for a body with no usage", () => {
-    expect(usageTotalsFrom(null)).toEqual({ inputTokens: 0, outputTokens: 0, webSearchRequests: 0 });
+    expect(usageTotalsFrom(null)).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedInputTokens: 0,
+      webSearchRequests: 0,
+    });
   });
 });

@@ -34,6 +34,7 @@ export const usageEvents = sqliteTable("usage_events", {
   model: text("model").notNull().default(""),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
+  cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
   webSearchRequests: integer("web_search_requests").notNull().default(0),
   status: integer("status").notNull().default(0),
   viaRelay: integer("via_relay").notNull().default(0),

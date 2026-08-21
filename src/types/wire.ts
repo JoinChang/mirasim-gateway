@@ -15,6 +15,7 @@ export type Dialect = "messages" | "chat" | "responses";
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
   webSearchRequests: number;
 }
 

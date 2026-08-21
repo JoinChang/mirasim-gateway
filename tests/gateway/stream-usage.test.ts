@@ -29,13 +29,13 @@ describe("createUsageScanner", () => {
   it("understands the OpenAI shape too", () => {
     const s = createUsageScanner();
     s.push(`data: ${JSON.stringify({ usage: { prompt_tokens: 20, completion_tokens: 5 } })}\n\n`);
-    expect(s.result()).toEqual({ inputTokens: 20, outputTokens: 5 });
+    expect(s.result()).toEqual({ inputTokens: 20, outputTokens: 5, cachedInputTokens: 0 });
   });
 
   it("reports zeros when the stream carried no usage at all", () => {
     const s = createUsageScanner();
     s.push(sse("content_block_delta", { type: "content_block_delta", delta: { text: "hi" } }));
-    expect(s.result()).toEqual({ inputTokens: 0, outputTokens: 0 });
+    expect(s.result()).toEqual({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
   });
 
   it("ignores lines that are not JSON rather than throwing", () => {
@@ -49,7 +49,7 @@ describe("createUsageScanner", () => {
     const s = createUsageScanner();
     s.push(sse("message_start", { type: "message_start", message: { usage: { input_tokens: 100 } } }));
     s.push(sse("message_delta", { type: "message_delta", usage: { input_tokens: 0, output_tokens: 3 } }));
-    expect(s.result()).toEqual({ inputTokens: 100, outputTokens: 3 });
+    expect(s.result()).toEqual({ inputTokens: 100, outputTokens: 3, cachedInputTokens: 0 });
   });
 
   it("flags a mid-stream error event, keeping the tokens already consumed", () => {
@@ -78,6 +78,6 @@ describe("createUsageScanner", () => {
       }),
     );
     s.push(sse("message_delta", { type: "message_delta", usage: { output_tokens: 5 } }));
-    expect(s.result()).toEqual({ inputTokens: 4813, outputTokens: 5 });
+    expect(s.result()).toEqual({ inputTokens: 4813, outputTokens: 5, cachedInputTokens: 4804 });
   });
 });

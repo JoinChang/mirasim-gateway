@@ -66,7 +66,7 @@ describe("runWebSearchLoop", () => {
       maxUses: 5,
     });
     expect(hops).toBe(2);
-    expect(out.usage).toEqual({ inputTokens: 200, outputTokens: 20, webSearchRequests: 1 });
+    expect(out.usage).toEqual({ inputTokens: 200, outputTokens: 20, cachedInputTokens: 0, webSearchRequests: 1 });
   });
 
   it("counts cached input in the per-hop totals", async () => {
@@ -88,7 +88,7 @@ describe("runWebSearchLoop", () => {
       search: async () => [],
       maxUses: 1,
     });
-    expect(out.usage).toEqual({ inputTokens: 4813, outputTokens: 5, webSearchRequests: 0 });
+    expect(out.usage).toEqual({ inputTokens: 4813, outputTokens: 5, cachedInputTokens: 4804, webSearchRequests: 0 });
   });
 
   it("reports which account served the answer", async () => {

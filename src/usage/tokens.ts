@@ -33,12 +33,25 @@ export function totalOutputTokens(usage: any): number {
  * Totals for a complete response body. The only place a body is read for usage —
  * the streaming path measures as it flows, and the search loop sums its own hops.
  */
+/**
+ * The input tokens that were served from cache — the numerator of a cache-hit
+ * rate. cache *creation* is fresh input being written (billed higher), so it is
+ * not a hit and not counted here. Anthropic reports it as
+ * `cache_read_input_tokens`; OpenAI as `prompt_tokens_details.cached_tokens`.
+ */
+export function cachedInputTokens(usage: any): number {
+  if (usage == null || typeof usage !== "object") return 0;
+  if (typeof usage.prompt_tokens === "number") return num(usage.prompt_tokens_details?.cached_tokens);
+  return num(usage.cache_read_input_tokens);
+}
+
 export function usageTotalsFrom(json: any): UsageTotals {
   const u = json?.usage;
   const searches = u?.server_tool_use?.web_search_requests ?? u?.web_search_requests ?? 0;
   return {
     inputTokens: totalInputTokens(u),
     outputTokens: totalOutputTokens(u),
+    cachedInputTokens: cachedInputTokens(u),
     webSearchRequests: Number(searches) || 0,
   };
 }

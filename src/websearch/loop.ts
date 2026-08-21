@@ -1,5 +1,5 @@
 import type { Dialect, SearchRow, UsageTotals } from "../types/wire.js";
-import { totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
+import { cachedInputTokens, totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
 
 export interface DialectAdapter {
   kind: Dialect;
@@ -41,12 +41,13 @@ export async function runWebSearchLoop(params: {
   let searches = 0;
   let last: any = null;
   let accountId: string | undefined;
-  const usage: UsageTotals = { inputTokens: 0, outputTokens: 0, webSearchRequests: 0 };
+  const usage: UsageTotals = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, webSearchRequests: 0 };
   for (let h = 0; h < maxHops; h++) {
     const r = await hop(adapter.body());
     accountId = r.accountId ?? accountId;
     usage.inputTokens += totalInputTokens(r.json?.usage);
     usage.outputTokens += totalOutputTokens(r.json?.usage);
+    usage.cachedInputTokens += cachedInputTokens(r.json?.usage);
     if (r.status !== 200) return { ...r, accountId, usage };
     last = r.json;
     const calls = adapter.parseToolCalls(r.json);

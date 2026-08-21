@@ -79,7 +79,13 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     const rec = (
       status: number,
       accountId: string | null,
-      u: { inputTokens: number; outputTokens: number; webSearchRequests: number; cost: number | null },
+      u: {
+        inputTokens: number;
+        outputTokens: number;
+        cachedInputTokens: number;
+        webSearchRequests: number;
+        cost: number | null;
+      },
     ) =>
       deps.recorder.record({
         downstreamKeyId: keyId,
@@ -116,15 +122,16 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
     // stream that opened 200 and then carried an error frame is booked as the
     // upstream failure it was (502), not a served request — the tokens still
     // count, since the relay consumed them before it failed.
-    const record = (u: { inputTokens: number; outputTokens: number; error?: string }) =>
+    const record = (u: { inputTokens: number; outputTokens: number; cachedInputTokens: number; error?: string }) =>
       rec(u.error !== undefined ? 502 : result.response.status, result.accountId ?? null, {
         inputTokens: u.inputTokens,
         outputTokens: u.outputTokens,
+        cachedInputTokens: u.cachedInputTokens,
         webSearchRequests: 0,
         cost: null,
       });
     if (!result.response.body) {
-      record({ inputTokens: 0, outputTokens: 0 });
+      record({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 });
       return new Response(null, { status: result.response.status, headers });
     }
     return new Response(meterStream(result.response.body, record), {

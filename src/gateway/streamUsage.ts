@@ -1,8 +1,9 @@
-import { totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
+import { cachedInputTokens, totalInputTokens, totalOutputTokens } from "../usage/tokens.js";
 
 export interface StreamUsage {
   inputTokens: number;
   outputTokens: number;
+  cachedInputTokens: number;
   /**
    * The type of an error frame seen mid-stream, if any. A response can open 200
    * and then fail — the relay bills the input, streams a while, and sends an
@@ -26,12 +27,14 @@ export function createUsageScanner() {
   let pending = "";
   let inputTokens = 0;
   let outputTokens = 0;
+  let cached = 0;
   let error: string | undefined;
 
   const absorb = (u: any) => {
     if (!u || typeof u !== "object") return;
     // Anthropic repeats input on later events as 0; the real figure is the max.
     inputTokens = Math.max(inputTokens, totalInputTokens(u));
+    cached = Math.max(cached, cachedInputTokens(u));
     // Output is cumulative per event, so the last non-zero report wins.
     const output = totalOutputTokens(u);
     if (output > 0) outputTokens = output;
@@ -71,7 +74,12 @@ export function createUsageScanner() {
 
   return {
     push,
-    result: (): StreamUsage => ({ inputTokens, outputTokens, ...(error !== undefined ? { error } : {}) }),
+    result: (): StreamUsage => ({
+      inputTokens,
+      outputTokens,
+      cachedInputTokens: cached,
+      ...(error !== undefined ? { error } : {}),
+    }),
   };
 }
 
