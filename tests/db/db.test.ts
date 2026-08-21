@@ -31,6 +31,50 @@ describe("db client + repositories", () => {
     expect(k.findByHash("h1")?.enabled).toBe(0);
   });
 
+  it("usage.windowStats aggregates requests, successes, cache reads, and latency", () => {
+    const db = memDb();
+    const u = usageRepo(db);
+    const base = {
+      downstreamKeyId: null,
+      accountId: null,
+      dialect: "messages",
+      model: "m",
+      webSearchRequests: 0,
+      viaRelay: 0,
+      cost: null,
+    };
+    u.append({
+      ts: 2000,
+      status: 200,
+      inputTokens: 100,
+      cachedInputTokens: 80,
+      outputTokens: 5,
+      latencyMs: 300,
+      ...base,
+    });
+    u.append({
+      ts: 3000,
+      status: 200,
+      inputTokens: 50,
+      cachedInputTokens: 0,
+      outputTokens: 2,
+      latencyMs: 100,
+      ...base,
+    });
+    u.append({ ts: 4000, status: 429, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, latencyMs: 20, ...base });
+    u.append({
+      ts: 500,
+      status: 200,
+      inputTokens: 999,
+      cachedInputTokens: 999,
+      outputTokens: 0,
+      latencyMs: 999,
+      ...base,
+    }); // before window
+    const st = u.windowStats(1000);
+    expect(st).toEqual({ requests: 3, ok: 2, inputTokens: 150, cachedInputTokens: 80, latencyMsTotal: 420 });
+  });
+
   it("usage.dailyTokens groups by the offset-shifted local day", () => {
     const db = memDb();
     const u = usageRepo(db);

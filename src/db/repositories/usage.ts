@@ -8,6 +8,38 @@ export function usageRepo(db: DB) {
       db.insert(usageEvents).values(e).run();
     },
     /**
+     * One-row summary of downstream traffic since sinceMs: how many requests, how
+     * many succeeded (2xx), total and cache-read input tokens, and total latency.
+     * Only gateway requests reach usage_events — internal probes call the pool
+     * directly — so these denominators are real caller traffic, not noise.
+     */
+    windowStats(sinceMs: number): {
+      requests: number;
+      ok: number;
+      inputTokens: number;
+      cachedInputTokens: number;
+      latencyMsTotal: number;
+    } {
+      const r = db
+        .select({
+          requests: sql<number>`count(*)`,
+          ok: sql<number>`coalesce(sum(case when ${usageEvents.status} between 200 and 299 then 1 else 0 end), 0)`,
+          inputTokens: sql<number>`coalesce(sum(${usageEvents.inputTokens}), 0)`,
+          cachedInputTokens: sql<number>`coalesce(sum(${usageEvents.cachedInputTokens}), 0)`,
+          latencyMsTotal: sql<number>`coalesce(sum(${usageEvents.latencyMs}), 0)`,
+        })
+        .from(usageEvents)
+        .where(gte(usageEvents.ts, sinceMs))
+        .get();
+      return {
+        requests: r?.requests ?? 0,
+        ok: r?.ok ?? 0,
+        inputTokens: r?.inputTokens ?? 0,
+        cachedInputTokens: r?.cachedInputTokens ?? 0,
+        latencyMsTotal: r?.latencyMsTotal ?? 0,
+      };
+    },
+    /**
      * Tokens per UTC day since sinceMs, oldest first, days with no traffic
      * omitted. Rows carrying no tokens are excluded rather than counted as a
      * zero-token day: the internal reachability probes land here too, and a

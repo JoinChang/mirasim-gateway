@@ -17,6 +17,7 @@ describe("createUsageSource", () => {
       () => ["a1"],
       () => [],
       () => [],
+      undefined,
       60_000,
     );
     const t = Date.now();
@@ -34,6 +35,7 @@ describe("createUsageSource", () => {
       () => ["a1"],
       () => [],
       () => [],
+      undefined,
       1000,
     );
     const t = Date.now();
@@ -50,6 +52,7 @@ describe("createUsageSource", () => {
       () => ["a1"],
       () => [],
       () => [],
+      undefined,
       60_000,
     );
     const t = Date.now();
@@ -89,6 +92,7 @@ describe("createUsageSource", () => {
       },
       () => [],
       () => [],
+      undefined,
       1,
     );
     return src.get().then((first) => {
@@ -365,5 +369,25 @@ describe("the model list", () => {
   it("disappears when nothing has been used", () => {
     expect(renderUsagePage({ ...base, models: [] }, now)).not.toContain("Models");
     expect(renderUsagePage({ ...base, models: [m("a", 0)] }, now)).not.toContain("Models");
+  });
+});
+
+describe("the stats row", () => {
+  const now = Date.parse("2026-08-20T12:00:00Z");
+  const base = { windows: [], serving: 1, total: 1, days: [], models: [], takenAt: now };
+
+  it("shows requests, success rate, cache-hit rate, and average latency", () => {
+    const stats = { requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 };
+    const html = renderUsagePage({ ...base, stats }, now);
+    expect(html).toContain("Requests");
+    expect(html).toContain(">10<");
+    expect(html).toMatch(/90\s*%/); // 9/10 succeeded
+    expect(html).toMatch(/60\s*%/); // 600/1000 served from cache
+    expect(html).toMatch(/500\s*ms/); // 5000ms / 10 requests
+  });
+
+  it("omits the row entirely when there was no traffic", () => {
+    const stats = { requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 };
+    expect(renderUsagePage({ ...base, stats }, now)).not.toContain("Requests");
   });
 });

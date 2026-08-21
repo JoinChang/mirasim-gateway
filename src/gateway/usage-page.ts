@@ -13,12 +13,21 @@ export interface ModelTokens {
   tokens: number;
 }
 
+export interface WindowStats {
+  requests: number;
+  ok: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  latencyMsTotal: number;
+}
+
 export interface UsageSnapshot {
   windows: BudgetWindow[];
   serving: number;
   total: number;
   days: DailyTokens[];
   models: ModelTokens[];
+  stats?: WindowStats;
   takenAt: number;
 }
 
@@ -39,6 +48,13 @@ export function createUsageSource(
   listAccountIds: () => string[],
   listDailyTokens: (sinceMs: number) => DailyTokens[] = () => [],
   listModelTokens: (sinceMs: number) => ModelTokens[] = () => [],
+  listStats: (sinceMs: number) => WindowStats = () => ({
+    requests: 0,
+    ok: 0,
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    latencyMsTotal: 0,
+  }),
   ttlMs = 60_000,
 ) {
   let cached: UsageSnapshot | null = null;
@@ -55,7 +71,8 @@ export function createUsageSource(
     const since = now - (DAYS + 1) * 86400_000;
     const days = listDailyTokens(since);
     const models = listModelTokens(since);
-    return { windows, serving: serving.length, total: ids.length, days, models, takenAt: now };
+    const stats = listStats(since);
+    return { windows, serving: serving.length, total: ids.length, days, models, stats, takenAt: now };
   }
 
   return {
@@ -238,6 +255,27 @@ function renderModels(models: ModelTokens[]): string {
  * or a per-account figure. It is served without a key, so everything on it is
  * public, and the pool's membership is not something a spend figure needs.
  */
+/**
+ * A compact strip of headline numbers for the whole window: how much traffic,
+ * how much of it succeeded, how much input came from cache (Claude Code leans on
+ * prompt caching, so this runs high), and how slow the average turn was. Omitted
+ * when there was no traffic — an empty strip says less than no strip.
+ */
+function renderStats(stats: WindowStats | undefined): string {
+  if (!stats || stats.requests === 0) return "";
+  const rate = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)}%` : "—");
+  const lat = stats.latencyMsTotal / stats.requests;
+  const latStr = lat < 1000 ? `${Math.round(lat)}ms` : `${(lat / 1000).toFixed(1)}s`;
+  const tile = (label: string, value: string) =>
+    `<div class="stt"><span class="stv">${value}</span><span class="stl">${label}</span></div>`;
+  return `<section class="tr st">
+  ${tile("Requests", fmtTokens(stats.requests))}
+  ${tile("Success", rate(stats.ok, stats.requests))}
+  ${tile("Cache hit", rate(stats.cachedInputTokens, stats.inputTokens))}
+  ${tile("Avg latency", latStr)}
+</section>`;
+}
+
 export function renderUsagePage(snap: UsageSnapshot, now = Date.now(), offsetHours = 0): string {
   const rows = snap.windows
     .map((w) => {
@@ -296,11 +334,16 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .mt{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
 .mb{height:4px;margin:.35rem 0 0}
 .dim{color:var(--dim)}
+.st{display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem}
+.stt{display:flex;flex-direction:column;gap:.15rem}
+.stv{font-size:1.2rem;font-weight:600;font-variant-numeric:tabular-nums}
+.stl{font-size:.72rem;color:var(--dim);letter-spacing:.02em}
 .sm{font-size:.85rem;margin:0}
 </style>
 <main>
   <h3 class="sh">${ICON_LIMITS}Limits</h3>
 ${rows || empty}
+${renderStats(snap.stats)}
 ${renderChart(snap.days, now, offsetHours)}
 ${renderModels(snap.models)}
 </main>`;
