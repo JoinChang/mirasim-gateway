@@ -29,7 +29,10 @@ export interface AttemptFailure {
 /** Why the attempt loop stopped, which is not the same as why attempts failed. */
 export type Stop = "no_accounts" | "deadline" | "max_attempts";
 
-const shortId = (id: string) => id.slice(0, 16);
+const shortId = (id: string) => id.slice(0, 16);
+
+/** Cap on the Retry-After we hint to callers: come back soon, not in an hour. */
+const RETRY_AFTER_CAP_S = 10;
 
 function describe(f: AttemptFailure): string {
   if (f.stage === "refresh" || f.stage === "call") return f.error ?? f.stage;
@@ -67,16 +70,19 @@ export function exhaustedResponse(failures: AttemptFailure[], stop: Stop): Respo
     return parts.join("; ");
   })();
 
-  // The longest wait any throttled attempt reported, promoted to the standard
-  // header. Downstream clients back off on `Retry-After`, not on a value buried
-  // in the JSON body — and the shared-budget refusal carries 3600, so without
-  // this the caller retries straight into a wall it was already told about.
-  const retryAfter = failures
+  // A Retry-After for the caller, capped low. Clients honour this header (the
+  // Anthropic SDK does), so the relay's raw wait — 60 on an account throttle,
+  // 3600 on a spent shared budget — would freeze the caller far longer than the
+  // pool actually needs: accounts recover gradually and a nearby one is often
+  // free within seconds. Hint a short retry so the client comes back soon and
+  // finds it; the relay's real figure stays in the per-attempt body. Use the
+  // reported wait only when it is already below the cap.
+  const reported = failures
     .map((f) => Number(f.retryAfter))
     .filter((n) => Number.isFinite(n) && n > 0)
     .reduce((max, n) => Math.max(max, n), 0);
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (retryAfter > 0) headers["retry-after"] = String(retryAfter);
+  if (reported > 0) headers["retry-after"] = String(Math.min(reported, RETRY_AFTER_CAP_S));
 
   return new Response(
     JSON.stringify({
