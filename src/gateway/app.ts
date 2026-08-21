@@ -17,7 +17,7 @@ import type { Recorder } from "../usage/recorder.js";
 import { chartAsset } from "./chart-asset.js";
 import { explainRelayError } from "./relayErrors.js";
 import { meterStream } from "./streamUsage.js";
-import { createUsageSource, parseRange, renderUsagePage } from "./usage-page.js";
+import { createUsageSource, parseRange, renderSections, renderUsagePage } from "./usage-page.js";
 import { applyModelAlias, sha256Hex, utcDayStartMs } from "./util.js";
 
 type Vars = { key?: DownstreamKey; openMode?: boolean };
@@ -223,17 +223,24 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
   app.get("/usage", async (c) => {
     const snap = await usage.get();
     // The API: `?format=json&range=24h|7d|30d` returns the account state plus one
-    // range's windowed numbers, flattened. The page pre-renders all three and
-    // switches client-side, so it needs the whole snapshot instead.
+    // range's windowed numbers, flattened, for external consumers.
     if (/application\/json/.test(c.req.header("accept") ?? "") || /[?&]format=json/.test(c.req.url)) {
       const range = parseRange(c.req.query("range"));
       const { windows, serving, total, takenAt } = snap;
       return c.json({ windows, serving, total, takenAt, range, ...snap.byRange[range] });
     }
-    return c.html(renderUsagePage(snap, Date.now(), cfg.usageTzOffsetHours), 200, {
-      // A minute-old number is fine to reuse; a stale one for longer is not.
-      "cache-control": "public, max-age=30",
-    });
+    // The page's own switching and auto-refresh fetch section HTML per range and
+    // swap it in, so each section carries its own `?<section>=<range>` param.
+    const now = Date.now();
+    const ranges = {
+      tokens: parseRange(c.req.query("tokens")),
+      traffic: parseRange(c.req.query("traffic")),
+      models: parseRange(c.req.query("models")),
+    };
+    const headers = { "cache-control": "public, max-age=30" };
+    if (c.req.query("fragment") !== undefined)
+      return c.html(renderSections(snap, now, cfg.usageTzOffsetHours, ranges), 200, headers);
+    return c.html(renderUsagePage(snap, now, cfg.usageTzOffsetHours, ranges), 200, headers);
   });
 
   app.get("/metrics", async (c) => {

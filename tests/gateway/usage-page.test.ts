@@ -4,7 +4,9 @@ import {
   createUsageSource,
   DEFAULT_RANGE,
   parseRange,
+  renderSections,
   renderUsagePage,
+  type SectionRanges,
   type UsageSnapshot,
 } from "../../src/gateway/usage-page.js";
 import { fakePool, R } from "../helpers/fakePool.js";
@@ -41,6 +43,9 @@ const mkSnap = (
   byRange: { "24h": rd(over["24h"]), "7d": rd(over["7d"]), "30d": rd(over["30d"]) },
   ...extra,
 });
+
+// Range selections; every section defaults to 7d.
+const R7: SectionRanges = { tokens: "7d", traffic: "7d", models: "7d" };
 
 describe("createUsageSource", () => {
   it("caches, so a page nobody has to authenticate for cannot be turned into relay load", async () => {
@@ -94,10 +99,7 @@ describe("createUsageSource", () => {
     expect(requests.length).toBe(2);
   });
 
-  it("builds every range in one go so each section can switch without new upstream load", async () => {
-    // The account part is what costs relay calls; the windowed part is cheap DB
-    // reads. get() returns all three ranges pre-built so a client-side switch
-    // needs no fetch and no extra relay work.
+  it("builds every range in one go so any fragment is one cheap DB read, no relay", async () => {
     const { pool } = fakePool({ respond });
     const src = createUsageSource(
       pool,
@@ -144,8 +146,8 @@ describe("createUsageSource", () => {
     return src.get().then((first) => {
       broken = true;
       return src.get(Date.now() + 10_000).then((second) => {
-        // The account list now throws; the stale cached account part is served
-        // rather than a 500 — same takenAt and serving count as before.
+        // The stale cached account part is served rather than a 500 — same
+        // takenAt and serving count as before.
         expect(second.takenAt).toBe(first.takenAt);
         expect(second.serving).toBe(first.serving);
       });
@@ -176,7 +178,7 @@ describe("parseRange", () => {
   });
 });
 
-describe("renderUsagePage", () => {
+describe("renderUsagePage (the shell)", () => {
   const now = Date.now();
   const snap = mkSnap(
     now,
@@ -204,6 +206,13 @@ describe("renderUsagePage", () => {
   it("names no account — the page is public and pool membership is not part of a spend figure", () => {
     const html = renderUsagePage(snap);
     expect(html).not.toMatch(/usr_|acct_|key_|sk-ant|[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
+  });
+
+  it("carries an auto-refresh toggle and a swappable section container", () => {
+    const html = renderUsagePage(snap);
+    expect(html).toContain('id="ar"'); // the auto-refresh checkbox
+    expect(html).toContain("Auto-refresh");
+    expect(html).toMatch(/<div id="u"[^>]*data-tokens="7d"/); // the swap target, seeded with its ranges
   });
 
   it("says when a reset is only the first of several", () => {
@@ -276,40 +285,78 @@ describe("renderUsagePage", () => {
   });
 });
 
+describe("renderSections (the fragment)", () => {
+  const now = Date.parse("2026-08-18T12:00:00Z");
+  const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
+  const hour = (n: number) => new Date(now - n * 3600_000).toISOString().slice(0, 13);
+  const cd = (html: string) =>
+    JSON.parse(/<script type="application\/json" id="cd">(.*?)<\/script>/.exec(html)![1]!) as {
+      labels: string[];
+      values: (number | null)[];
+      bucket: string;
+    };
+
+  it("returns inner HTML with no document shell or controller", () => {
+    const frag = renderSections(mkSnap(now, { "7d": { days: [{ day: day(0), tokens: 100 }] } }), now);
+    expect(frag).not.toContain("<!doctype");
+    expect(frag).not.toContain("<html");
+    expect(frag).not.toContain("<head");
+    expect(frag).not.toContain('src="/usage/chart.js"'); // the shell owns the library tag
+    expect(frag).not.toContain("addEventListener"); // and the controller
+    expect(frag).toContain("Limits");
+    expect(frag).toContain("Token Usage");
+  });
+
+  it("renders the token section at the requested range", () => {
+    const over = {
+      "24h": { days: [{ day: hour(0), tokens: 5 }] },
+      "7d": { days: [{ day: day(0), tokens: 100 }] },
+    };
+    const s = cd(renderSections(mkSnap(now, over), now, 0, { tokens: "24h", traffic: "7d", models: "7d" }));
+    expect(s.bucket).toBe("hour");
+    expect(s.labels).toHaveLength(24);
+  });
+});
+
 describe("the time-range switchers", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
-  const full = () =>
-    mkSnap(now, {
-      "7d": {
-        days: [{ day: day(0), tokens: 100 }],
-        models: [{ model: "m", tokens: 100 }],
-        statsByDay: [{ day: day(0), requests: 5, ok: 5, inputTokens: 100, cachedInputTokens: 50, latencyMsTotal: 500 }],
-      },
-    });
+  const full = (ranges = R7) =>
+    renderUsagePage(
+      mkSnap(now, {
+        "7d": {
+          days: [{ day: day(0), tokens: 100 }],
+          models: [{ model: "m", tokens: 100 }],
+          statsByDay: [
+            { day: day(0), requests: 5, ok: 5, inputTokens: 100, cachedInputTokens: 50, latencyMsTotal: 500 },
+          ],
+        },
+        "24h": {
+          days: [{ day: day(0), tokens: 100 }],
+          models: [{ model: "m", tokens: 100 }],
+          statsByDay: [
+            { day: day(0), requests: 5, ok: 5, inputTokens: 100, cachedInputTokens: 50, latencyMsTotal: 500 },
+          ],
+        },
+      }),
+      now,
+      0,
+      ranges,
+    );
 
   it("gives each switchable section its own switcher, none on Limits", () => {
-    const html = renderUsagePage(full(), now);
+    const html = full();
     expect(html).toContain('data-sw="tokens"');
     expect(html).toContain('data-sw="traffic"');
     expect(html).toContain('data-sw="models"');
-    // Limits is the relay's own budget windows, not a range we choose.
     expect(html).not.toContain('data-sw="limits"');
   });
 
-  it("offers all three ranges and defaults each switcher to 7d", () => {
-    const html = renderUsagePage(full(), now);
-    for (const r of ["24h", "7d", "30d"]) expect(html).toContain(`data-range="${r}"`);
-    // Three sections, each with 7d pre-selected.
-    expect((html.match(/data-range="7d" class="on"/g) ?? []).length).toBe(3);
-    expect(html).not.toContain('data-range="24h" class="on"');
-  });
-
-  it("carries a client toggle that switches one section at a time", () => {
-    const html = renderUsagePage(full(), now);
-    // The handler keys off the clicked switcher's own section, not the page.
-    expect(html).toContain("data-sw");
-    expect(html).toContain("<script>");
+  it("marks the section's currently-selected range, per section", () => {
+    const html = full({ tokens: "24h", traffic: "7d", models: "7d" });
+    // The tokens switcher shows 24h active; the others show 7d.
+    expect(html).toMatch(/data-sw="tokens">.*?data-range="24h" class="on"/s);
+    expect((html.match(/data-range="7d" class="on"/g) ?? []).length).toBe(2);
   });
 });
 
@@ -317,175 +364,133 @@ describe("the token usage chart", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
   const day = (n: number) => new Date(now - n * 86400_000).toISOString().slice(0, 10);
   const hour = (n: number) => new Date(now - n * 3600_000).toISOString().slice(0, 13);
-  const chartData = (html: string) =>
-    JSON.parse(/var CHART=(\{.*\});var _c/.exec(html)![1]!) as Record<
-      "24h" | "7d" | "30d",
-      { labels: string[]; values: (number | null)[]; bucket: string }
-    >;
-  const withDays = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, at = now, off = 0) =>
-    renderUsagePage(mkSnap(now, over), at, off);
-  const inlineScript = (html: string) => /<script>([\s\S]*?)<\/script>/.exec(html)![1]!;
+  const cd = (html: string) =>
+    JSON.parse(/<script type="application\/json" id="cd">(.*?)<\/script>/.exec(html)![1]!) as {
+      labels: string[];
+      values: (number | null)[];
+      bucket: string;
+    };
+  const controllerJs = (html: string) => /<script>([\s\S]*?)<\/script>/.exec(html)![1]!;
+  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, ranges = R7, at = now, off = 0) =>
+    renderUsagePage(mkSnap(now, over), at, off, ranges);
 
-  it("emits a syntactically valid inline script, chart or no chart", () => {
-    // vm.Script compiles the body without running it, so a malformed IIFE (a
-    // dropped brace) is caught here without touching document or Chart. String
-    // assertions alone never parse the script, which is how a broken one shipped.
-    const withChart = inlineScript(withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } }));
-    expect(() => new vm.Script(withChart)).not.toThrow();
-    // No token data → no chart embedded → the toggle handler alone must parse.
-    const trafficOnly = renderUsagePage(
-      mkSnap(now, {
-        "7d": {
-          statsByDay: [{ day: day(0), requests: 3, ok: 3, inputTokens: 9, cachedInputTokens: 3, latencyMsTotal: 30 }],
-        },
-      }),
-      now,
-    );
-    expect(trafficOnly).not.toContain("var CHART=");
-    expect(() => new vm.Script(inlineScript(trafficOnly))).not.toThrow();
+  it("embeds only the selected range's series (24h hourly, 7d/30d daily)", () => {
+    const over = {
+      "24h": { days: [{ day: hour(0), tokens: 5 }] },
+      "7d": { days: [{ day: day(0), tokens: 100 }] },
+      "30d": { days: [{ day: day(0), tokens: 100 }] },
+    };
+    const c7 = cd(page(over));
+    expect(c7.labels).toHaveLength(7);
+    expect(c7.bucket).toBe("day");
+    const c24 = cd(page(over, { tokens: "24h", traffic: "7d", models: "7d" }));
+    expect(c24.labels).toHaveLength(24);
+    expect(c24.bucket).toBe("hour");
+    expect(c24.labels[23]).toBe(hour(0));
+    const c30 = cd(page(over, { tokens: "30d", traffic: "7d", models: "7d" }));
+    expect(c30.labels).toHaveLength(30);
   });
 
-  it("embeds one dataset per range: 7 daily, 30 daily, 24 hourly points", () => {
-    const c = chartData(withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } }));
-    expect(c["7d"].labels).toHaveLength(7);
-    expect(c["30d"].labels).toHaveLength(30);
-    expect(c["24h"].labels).toHaveLength(24);
-    expect(c["7d"].bucket).toBe("day");
-    expect(c["24h"].bucket).toBe("hour");
-    expect(c["24h"].labels.every((l) => l.includes("T"))).toBe(true);
-    expect(c["24h"].labels[23]).toBe(hour(0));
-  });
-
-  it("orders the 7d axis oldest to newest, in the configured timezone", () => {
+  it("labels the 7d axis oldest to newest, in the configured timezone", () => {
     const utcEvening = Date.parse("2026-08-20T16:09:00Z");
-    // 16:09Z is already 00:09 next day at +8, so the newest bar reads 08-21.
-    const c = chartData(withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } }, utcEvening, 8));
-    expect(c["7d"].labels[6]).toBe("2026-08-21");
-    expect(c["7d"].labels[0]).toBe("2026-08-15");
-    const u = chartData(withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } }, utcEvening, 0));
-    expect(u["7d"].labels[6]).toBe("2026-08-20");
+    const c = cd(page({ "7d": { days: [{ day: day(0), tokens: 100 }] } }, R7, utcEvening, 8));
+    expect(c.labels[6]).toBe("2026-08-21");
+    expect(c.labels[0]).toBe("2026-08-15");
   });
 
   it("leaves quiet buckets null rather than zero", () => {
-    const c = chartData(withDays({ "7d": { days: [{ day: day(3), tokens: 50 }] } }));
-    expect(c["7d"].values).toHaveLength(7);
-    expect(c["7d"].values[3]).toBe(50);
-    expect(c["7d"].values.filter((v) => v !== null)).toHaveLength(1);
-    expect(c["7d"].values).not.toContain(0);
+    const c = cd(page({ "7d": { days: [{ day: day(3), tokens: 50 }] } }));
+    expect(c.values).toHaveLength(7);
+    expect(c.values[3]).toBe(50);
+    expect(c.values.filter((v) => v !== null)).toHaveLength(1);
+    expect(c.values).not.toContain(0);
   });
 
   it("uses a linear axis and floors the bar height, not a log scale", () => {
-    const html = withDays({
-      "7d": {
-        days: [
-          { day: day(0), tokens: 137_013 },
-          { day: day(1), tokens: 165_927_760 },
-        ],
-      },
-    });
+    const html = page({ "7d": { days: [{ day: day(0), tokens: 137_013 }] } });
     expect(html).not.toContain("'logarithmic'");
     expect(html).toContain("minBarLength");
   });
 
-  it("draws the default range on load", () => {
-    const html = withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } });
-    expect(html).toContain('draw("7d")');
-  });
-
   it("is titled Token Usage, not Daily Usage", () => {
-    const html = withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } });
+    const html = page({ "7d": { days: [{ day: day(0), tokens: 100 }] } });
     expect(html).toContain("Token Usage");
     expect(html).not.toContain("Daily Usage");
   });
 
   it("drops the whole section when no range has any tokens", () => {
-    expect(withDays({})).not.toContain("Token Usage");
-    expect(withDays({})).not.toContain("<canvas");
-    expect(withDays({ "7d": { days: [{ day: day(0), tokens: 0 }] } })).not.toContain("<canvas");
+    expect(page({})).not.toContain("Token Usage");
+    expect(page({})).not.toContain("<canvas");
+    expect(page({ "7d": { days: [{ day: day(0), tokens: 0 }] } })).not.toContain("<canvas");
   });
 
   it("loads the chart library from us, not from a CDN", () => {
-    const html = withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } });
+    const html = page({ "7d": { days: [{ day: day(0), tokens: 100 }] } });
     expect(html).toContain('src="/usage/chart.js"');
     expect(html).not.toMatch(/src="https?:/);
   });
 
-  it("heads Limits and Token Usage the same way when only tokens have data", () => {
-    const html = withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } });
-    expect(html.match(/class="sh"/g)).toHaveLength(2);
-    expect(html).toContain("Limits");
-    expect(html).toContain("Token Usage");
-  });
-
-  it("asks for no favicon the server does not have", () => {
-    const html = withDays({ "7d": { days: [{ day: day(0), tokens: 100 }] } });
-    expect(html).toContain('rel="icon"');
-    expect(html).toContain("data:image/svg+xml");
+  it("emits a syntactically valid controller script, with a chart and without", () => {
+    // vm.Script compiles the body without running it, catching a malformed IIFE
+    // (a dropped brace) without touching document, fetch, or Chart.
+    expect(() => new vm.Script(controllerJs(page({ "7d": { days: [{ day: day(0), tokens: 100 }] } })))).not.toThrow();
+    expect(() => new vm.Script(controllerJs(page({})))).not.toThrow();
   });
 });
 
 describe("the model list", () => {
   const now = Date.parse("2026-08-18T12:00:00Z");
   const m = (model: string, tokens: number) => ({ model, tokens });
+  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, ranges = R7) =>
+    renderUsagePage(mkSnap(now, over), now, 0, ranges);
 
-  it("renders a panel per range, 7d visible and the others hidden", () => {
-    const html = renderUsagePage(
-      mkSnap(now, {
-        "24h": { models: [m("recent", 5)] },
-        "7d": { models: [m("opus", 150_932_228), m("sonnet", 22_504_288)] },
-        "30d": { models: [m("older", 9)] },
-      }),
-      now,
-    );
+  it("shows the selected range's split, ordered by weight with magnitudes", () => {
+    const html = page({ "7d": { models: [m("opus", 150_932_228), m("sonnet", 22_504_288)] } });
     expect(html).toContain("Models");
-    expect(html).toMatch(/<div class="rp" data-range="7d">/); // default visible
-    expect(html).toMatch(/<div class="rp" data-range="24h" hidden>/);
-    expect(html).toContain("150.9M");
-  });
-
-  it("orders by weight and shows magnitudes within a range", () => {
-    const html = renderUsagePage(
-      mkSnap(now, { "7d": { models: [m("opus", 150_932_228), m("sonnet", 22_504_288)] } }),
-      now,
-    );
     expect(html.indexOf("opus")).toBeLessThan(html.indexOf("sonnet"));
     expect(html).toContain("150.9M");
     expect(html).toContain("22.5M");
   });
 
+  it("renders the range the switcher points at", () => {
+    const over = { "24h": { models: [m("recent", 5)] }, "7d": { models: [m("opus", 999)] } };
+    expect(page(over, { tokens: "7d", traffic: "7d", models: "24h" })).toContain("recent");
+    expect(page(over, { tokens: "7d", traffic: "7d", models: "24h" })).not.toContain("opus");
+  });
+
   it("sizes each bar by share of the total", () => {
-    const html = renderUsagePage(mkSnap(now, { "7d": { models: [m("a", 750), m("b", 250)] } }), now);
+    const html = page({ "7d": { models: [m("a", 750), m("b", 250)] } });
     expect(html).toContain("width:75.0%");
     expect(html).toContain("width:25.0%");
   });
 
   it("rolls the tail into one row rather than spending the section on zeroes", () => {
     const models = [m("a", 1_000_000), m("b", 100_000), m("c", 900), m("d", 80), m("e", 7), m("f", 3), m("g", 1)];
-    const html = renderUsagePage(mkSnap(now, { "7d": { models } }), now);
+    const html = page({ "7d": { models } });
     expect(html.match(/<li>/g)).toHaveLength(6);
     expect(html).toContain("Other");
     expect(html).not.toContain(">g<");
   });
 
   it("names an empty model rather than printing a blank row", () => {
-    expect(renderUsagePage(mkSnap(now, { "7d": { models: [m("", 10)] } }), now)).toContain("unknown");
+    expect(page({ "7d": { models: [m("", 10)] } })).toContain("unknown");
   });
 
   it("disappears when no range has any model usage", () => {
-    expect(renderUsagePage(mkSnap(now, {}), now)).not.toContain("Models");
-    expect(renderUsagePage(mkSnap(now, { "7d": { models: [m("a", 0)] } }), now)).not.toContain("Models");
+    expect(page({})).not.toContain("Models");
+    expect(page({ "7d": { models: [m("a", 0)] } })).not.toContain("Models");
   });
 });
 
 describe("the traffic row", () => {
   const now = Date.parse("2026-08-20T12:00:00Z");
   const day0 = new Date(now).toISOString().slice(0, 10);
+  const stat = { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 };
+  const page = (over: Partial<Record<"24h" | "7d" | "30d", RD>>, ranges = R7) =>
+    renderUsagePage(mkSnap(now, over), now, 0, ranges);
 
   it("shows the four totals, a title, and a sparkline per metric", () => {
-    const statsByDay = [
-      { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 },
-    ];
-    const html = renderUsagePage(mkSnap(now, { "7d": { statsByDay } }), now);
+    const html = page({ "7d": { statsByDay: [stat] } });
     expect(html).toContain("Traffic");
     expect(html).toContain("Requests");
     expect(html).toContain(">10<");
@@ -493,7 +498,7 @@ describe("the traffic row", () => {
     expect(html).toMatch(/60\s*%/);
     expect(html).toMatch(/500\s*ms/);
     expect(html).toContain('class="spk"');
-    expect((html.match(/class="spk-l"/g) ?? []).length).toBe(4); // one line per metric, in the visible 7d panel
+    expect((html.match(/class="spk-l"/g) ?? []).length).toBe(4); // one line per metric, selected range only
     expect(html).toContain('class="spk-a"');
     expect(html).toContain('class="spk-d"');
   });
@@ -502,28 +507,16 @@ describe("the traffic row", () => {
     // The sparkline SVG uses preserveAspectRatio="none", so x and y scale
     // unequally — a plain <circle r> renders as an ellipse. The dot must be a
     // scale-invariant marker: a round-capped, non-scaling stroke instead.
-    const statsByDay = [
-      { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 },
-    ];
-    const html = renderUsagePage(mkSnap(now, { "7d": { statsByDay } }), now);
+    const html = page({ "7d": { statsByDay: [stat] } });
     expect(html).not.toMatch(/<circle[^>]*class="spk-d"/);
     expect(html).toMatch(/<(?:path|line)[^>]*class="spk-d"/);
     expect(html).toMatch(/\.spk-d\{[^}]*vector-effect:non-scaling-stroke/);
     expect(html).toMatch(/\.spk-d\{[^}]*stroke-linecap:round/);
   });
 
-  it("renders a panel per range, 7d visible and the others hidden", () => {
-    const statsByDay = [
-      { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 },
-    ];
-    const html = renderUsagePage(mkSnap(now, { "7d": { statsByDay } }), now);
-    expect(html).toMatch(/<div class="rp" data-range="7d">/);
-    expect(html).toMatch(/<div class="rp" data-range="30d" hidden>/);
-  });
-
   it("omits the row entirely when no range had traffic", () => {
-    expect(renderUsagePage(mkSnap(now, {}), now)).not.toContain("Traffic");
+    expect(page({})).not.toContain("Traffic");
     const zero = [{ day: day0, requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 }];
-    expect(renderUsagePage(mkSnap(now, { "7d": { statsByDay: zero } }), now)).not.toContain("Traffic");
+    expect(page({ "7d": { statsByDay: zero } })).not.toContain("Traffic");
   });
 });

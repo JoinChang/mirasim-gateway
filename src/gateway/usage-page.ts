@@ -26,6 +26,13 @@ export interface DailyStat {
 /** The switchable time ranges the page offers, and how each buckets. */
 export type UsageRange = "24h" | "7d" | "30d";
 
+/** Which range each switchable section is currently showing. */
+export interface SectionRanges {
+  tokens: UsageRange;
+  traffic: UsageRange;
+  models: UsageRange;
+}
+
 interface RangeSpec {
   bucket: Bucket;
   /** How many buckets the axis draws. */
@@ -47,6 +54,7 @@ const RANGE_ORDER: UsageRange[] = ["24h", "7d", "30d"];
  * recent days that matter most. Every switcher defaults here.
  */
 export const DEFAULT_RANGE: UsageRange = "7d";
+const DEFAULT_RANGES: SectionRanges = { tokens: DEFAULT_RANGE, traffic: DEFAULT_RANGE, models: DEFAULT_RANGE };
 
 /** A range from an untrusted query string, or the default for anything else. */
 export function parseRange(v: string | undefined): UsageRange {
@@ -66,10 +74,10 @@ export interface UsageSnapshot {
   total: number;
   takenAt: number;
   /**
-   * Every range pre-built, so a client-side switch is a visibility toggle over
-   * data already on the page — no fetch, no fresh relay load. The relay-costly
-   * part (windows/serving/total) is range-independent and cached; only these
-   * cheap DB reads are recomputed per range.
+   * Every range pre-computed, so a fragment request for any range is a cheap DB
+   * read away with no extra relay work. The relay-costly part
+   * (windows/serving/total) is range-independent and cached; only these cheap DB
+   * reads vary by range.
    */
   byRange: Record<UsageRange, RangeData>;
 }
@@ -80,10 +88,10 @@ export interface UsageSnapshot {
  * The page needs no key, so anything it triggers is something a stranger can
  * trigger as often as they like. The costly part is the account state: building
  * it is two relay calls per account, and a failed one cools that account — an
- * uncached route would let a page-refresh loop disable the pool. So the account
- * state is cached (and single-flighted), while the per-range windowed data is
- * cheap DB reads recomputed on every request. Pre-building all three ranges is
- * what lets each section switch client-side without any new upstream work.
+ * uncached route would let a page-refresh loop (or the auto-refresh poll) disable
+ * the pool. So the account state is cached and single-flighted, while the
+ * per-range windowed data is cheap DB reads recomputed on every request. That
+ * TTL, not the read-only-ness, is what makes auto-refresh safe to poll.
  */
 export function createUsageSource(
   pool: Pool,
@@ -208,17 +216,17 @@ function bucketKey(ms: number, offsetHours: number, bucket: Bucket): string {
   return bucket === "hour" ? iso.slice(0, 13) : iso.slice(0, 10);
 }
 
-/** The right-of-title range switcher, one per switchable section. */
-function switcher(section: string): string {
+/** The right-of-title range switcher, with the section's current range marked. */
+function switcher(section: string, active: UsageRange): string {
   const buttons = RANGE_ORDER.map(
-    (r) => `<button type="button" data-range="${r}"${r === DEFAULT_RANGE ? ' class="on"' : ""}>${r}</button>`,
+    (r) => `<button type="button" data-range="${r}"${r === active ? ' class="on"' : ""}>${r}</button>`,
   ).join("");
   return `<span class="sw" data-sw="${section}">${buttons}</span>`;
 }
 
 /** `<h3>` with the title on the left and (optionally) a range switcher on the right. */
-function sectionHead(icon: string, title: string, section?: string): string {
-  return `<h3 class="sh"><span class="sht">${icon}${title}</span>${section ? switcher(section) : ""}</h3>`;
+function sectionHead(icon: string, title: string, section?: string, active: UsageRange = DEFAULT_RANGE): string {
+  return `<h3 class="sh"><span class="sht">${icon}${title}</span>${section ? switcher(section, active) : ""}</h3>`;
 }
 
 interface ChartSeries {
@@ -250,32 +258,28 @@ const hasChart = (s: ChartSeries) => s.values.some((v) => v !== null);
 
 /**
  * Tokens per bucket, drawn by Chart.js on a linear axis with a floored bar
- * height. The spread runs three orders of magnitude — a 165M-token day next to
- * a 137k one — so a bare linear axis flattens the small buckets into invisible
- * slivers. `minBarLength` gives every real bucket a pixel floor while the loud
- * ones keep their true, comparable heights; a log axis compressed the same way
- * but distorted the comparison the chart is for.
- *
- * All three ranges are embedded so the switcher redraws the one canvas from data
- * already on the page. The section is dropped only when no range has anything.
+ * height (minBarLength gives small buckets a pixel floor while loud ones keep
+ * their true heights; a log axis compressed the same way but distorted the
+ * comparison). Only the selected range's series is embedded — the switcher and
+ * auto-refresh fetch a fresh fragment to change it. The section is dropped only
+ * when no range has anything, so an empty selected range still shows a switcher
+ * to move off it.
  */
-function renderTokenUsage(
-  byRange: Record<UsageRange, RangeData>,
-  now: number,
-  offsetHours: number,
-): { section: string; chart: Record<UsageRange, ChartSeries> | null } {
-  const chart = {
-    "24h": chartSeries(byRange["24h"].days, now, offsetHours, RANGES["24h"]),
-    "7d": chartSeries(byRange["7d"].days, now, offsetHours, RANGES["7d"]),
-    "30d": chartSeries(byRange["30d"].days, now, offsetHours, RANGES["30d"]),
+function renderTokenUsage(byRange: Record<UsageRange, RangeData>, range: UsageRange, now: number, off: number): string {
+  const series = {
+    "24h": chartSeries(byRange["24h"].days, now, off, RANGES["24h"]),
+    "7d": chartSeries(byRange["7d"].days, now, off, RANGES["7d"]),
+    "30d": chartSeries(byRange["30d"].days, now, off, RANGES["30d"]),
   };
-  if (!RANGE_ORDER.some((r) => hasChart(chart[r]))) return { section: "", chart: null };
-  const section = `<section class="tr">
-  ${sectionHead(ICON_TOKENS, "Token Usage", "tokens")}
+  if (!RANGE_ORDER.some((r) => hasChart(series[r]))) return "";
+  // Embedded as inert JSON, not executable script: innerHTML swaps do not run
+  // scripts, so the persistent controller reads this after each swap and draws.
+  return `<section class="tr">
+  ${sectionHead(ICON_TOKENS, "Token Usage", "tokens", range)}
   <div class="chw"><canvas id="ch"></canvas></div>
   <p class="dim sm ce" id="ch-empty" hidden>No token usage in this range.</p>
+  <script type="application/json" id="cd">${JSON.stringify(series[range])}</script>
 </section>`;
-  return { section, chart };
 }
 
 const MODEL_ROWS = 5;
@@ -318,26 +322,17 @@ function modelRows(models: ModelTokens[]): string {
   </ul>`;
 }
 
-/** Each range's panel, default visible and the rest hidden, or "" if all empty. */
-function rangePanels(body: (r: UsageRange) => string): string | null {
-  const inners = RANGE_ORDER.map((r) => ({ r, inner: body(r) }));
-  if (!inners.some((x) => x.inner !== "")) return null;
-  return inners
-    .map(
-      ({ r, inner }) =>
-        `<div class="rp" data-range="${r}"${r === DEFAULT_RANGE ? "" : " hidden"}>${
-          inner || `<p class="dim sm">Nothing in this range.</p>`
-        }</div>`,
-    )
-    .join("\n  ");
-}
-
-function renderModels(byRange: Record<UsageRange, RangeData>): string {
-  const panels = rangePanels((r) => modelRows(byRange[r].models));
-  if (!panels) return "";
+function renderModels(byRange: Record<UsageRange, RangeData>, range: UsageRange): string {
+  const inner = {
+    "24h": modelRows(byRange["24h"].models),
+    "7d": modelRows(byRange["7d"].models),
+    "30d": modelRows(byRange["30d"].models),
+  };
+  if (!RANGE_ORDER.some((r) => inner[r] !== "")) return "";
+  const body = inner[range] || `<p class="dim sm">No model usage in this range.</p>`;
   return `<section class="tr">
-  ${sectionHead(ICON_MODELS, "Models", "models")}
-  ${panels}
+  ${sectionHead(ICON_MODELS, "Models", "models", range)}
+  ${body}
 </section>`;
 }
 
@@ -432,35 +427,22 @@ function statsTiles(statsByDay: DailyStat[], now: number, offsetHours: number, s
   </div>`;
 }
 
-function renderTraffic(byRange: Record<UsageRange, RangeData>, now: number, offsetHours: number): string {
-  const panels = rangePanels((r) => statsTiles(byRange[r].statsByDay, now, offsetHours, RANGES[r]));
-  if (!panels) return "";
+function renderTraffic(byRange: Record<UsageRange, RangeData>, range: UsageRange, now: number, off: number): string {
+  const inner = {
+    "24h": statsTiles(byRange["24h"].statsByDay, now, off, RANGES["24h"]),
+    "7d": statsTiles(byRange["7d"].statsByDay, now, off, RANGES["7d"]),
+    "30d": statsTiles(byRange["30d"].statsByDay, now, off, RANGES["30d"]),
+  };
+  if (!RANGE_ORDER.some((r) => inner[r] !== "")) return "";
+  const body = inner[range] || `<p class="dim sm">No traffic in this range.</p>`;
   return `<section class="tr">
-  ${sectionHead(ICON_TRAFFIC, "Traffic", "traffic")}
-  ${panels}
+  ${sectionHead(ICON_TRAFFIC, "Traffic", "traffic", range)}
+  ${body}
 </section>`;
 }
 
-/**
- * The client toggle. One handler for every switcher: clicking a range button
- * flips the active button and the `.rp` panels within *that* switcher's own
- * section, so each section switches independently. The token chart has no `.rp`
- * panels — its one canvas is redrawn from the embedded per-range data instead.
- */
-function toggleScript(chart: Record<UsageRange, ChartSeries> | null): string {
-  const toggle = `document.querySelectorAll('[data-sw]').forEach(function(sw){sw.addEventListener('click',function(e){var btn=e.target.closest('button[data-range]');if(!btn)return;var range=btn.getAttribute('data-range');sw.querySelectorAll('button').forEach(function(b){if(b===btn){b.classList.add('on')}else{b.classList.remove('on')}});var sec=sw.closest('.tr');sec.querySelectorAll('.rp').forEach(function(p){p.hidden=p.getAttribute('data-range')!==range});if(sw.getAttribute('data-sw')==='tokens'&&typeof draw==='function')draw(range)})});`;
-  if (!chart) return `(function(){${toggle}})()`;
-  const data = JSON.stringify(chart);
-  const draw = `var CHART=${data};var _c;function fmt(n){return n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n)}function draw(range){var d=CHART[range];var cv=document.getElementById('ch');var note=document.getElementById('ch-empty');if(_c){_c.destroy();_c=null}var has=d&&d.values.some(function(v){return v!==null});cv.style.display=has?'':'none';if(note)note.hidden=has;if(!has)return;var cs=getComputedStyle(document.documentElement);var dim=cs.getPropertyValue('--dim').trim(),line=cs.getPropertyValue('--line').trim(),fill=cs.getPropertyValue('--fill').trim();_c=new Chart(cv,{type:'bar',data:{labels:d.labels.map(function(s){return d.bucket==='hour'?s.slice(11,13)+':00':s.slice(5)}),datasets:[{data:d.values,backgroundColor:fill,borderRadius:2,borderSkipped:false,minBarLength:3}]},options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:false},tooltip:{displayColors:false,callbacks:{title:function(i){var s=d.labels[i[0].dataIndex];return d.bucket==='hour'?s.replace('T',' ')+':00':s},label:function(c){return fmt(c.parsed.y)+' tokens'}}}},scales:{x:{grid:{display:false},border:{color:line},ticks:{color:dim,font:{size:10},maxRotation:0,autoSkipPadding:8}},y:{beginAtZero:true,grid:{color:line},border:{display:false},ticks:{color:dim,font:{size:10},maxTicksLimit:4,callback:function(v){return fmt(v)}}}}}})}`;
-  return `(function(){${draw}${toggle}draw(${JSON.stringify(DEFAULT_RANGE)})})()`;
-}
-
-/**
- * The page is deliberately anonymous: totals only, never an account id, an email
- * or a per-account figure. It is served without a key, so everything on it is
- * public, and the pool's membership is not something a spend figure needs.
- */
-export function renderUsagePage(snap: UsageSnapshot, now = Date.now(), offsetHours = 0): string {
+/** The bounded-window cards — the relay's own budget, not a range we choose. */
+function renderLimits(snap: UsageSnapshot, now: number): string {
   const rows = snap.windows
     .map((w) => {
       const frac = w.budgetCents > 0 ? Math.min(1, w.usedCents / w.budgetCents) : 0;
@@ -482,13 +464,55 @@ export function renderUsagePage(snap: UsageSnapshot, now = Date.now(), offsetHou
 </section>`;
     })
     .join("\n");
+  return rows || `<section class="w"><p class="dim">No account is being served right now.</p></section>`;
+}
 
-  const empty = `<section class="w"><p class="dim">No account is being served right now.</p></section>`;
+/**
+ * The swappable region: Limits plus the three switchable sections, each at its
+ * selected range. This is what a `?fragment=1` request returns and what the
+ * client drops into `#u` on a switch or an auto-refresh tick — no doctype, no
+ * head, no controller script; those live in the shell and persist across swaps.
+ * The page is deliberately anonymous: totals only, never an account id, an email
+ * or a per-account figure.
+ */
+export function renderSections(snap: UsageSnapshot, now = Date.now(), off = 0, ranges = DEFAULT_RANGES): string {
+  return `  ${sectionHead(ICON_LIMITS, "Limits")}
+${renderLimits(snap, now)}
+${renderTraffic(snap.byRange, ranges.traffic, now, off)}
+${renderTokenUsage(snap.byRange, ranges.tokens, now, off)}
+${renderModels(snap.byRange, ranges.models)}`;
+}
 
-  const traffic = renderTraffic(snap.byRange, now, offsetHours);
-  const tokens = renderTokenUsage(snap.byRange, now, offsetHours);
-  const models = renderModels(snap.byRange);
+/**
+ * The persistent controller, in the shell so it survives the innerHTML swaps.
+ * One delegated handler for every switcher (each switch fetches a fresh fragment
+ * for that section's new range, keyed off the clicked switcher's own section, so
+ * sections switch independently); the chart is rebuilt from the fragment's inert
+ * JSON after each swap; auto-refresh polls the same fragment on a 30s timer,
+ * remembered in localStorage. The 30s cadence matches the page cache — polling
+ * faster only re-reads it — and the account state's TTL keeps the relay safe.
+ */
+function controller(): string {
+  return `(function(){
+var U=document.getElementById('u');if(!U)return;var C;
+var R={tokens:U.getAttribute('data-tokens'),traffic:U.getAttribute('data-traffic'),models:U.getAttribute('data-models')};
+function fmt(n){return n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n)}
+function drawChart(){var cv=document.getElementById('ch');if(C){C.destroy();C=null}if(!cv)return;
+var el=document.getElementById('cd'),note=document.getElementById('ch-empty'),d=null;try{d=el?JSON.parse(el.textContent):null}catch(e){}
+var has=d&&d.values.some(function(v){return v!==null});cv.style.display=has?'':'none';if(note)note.hidden=has;if(!has)return;
+var cs=getComputedStyle(document.documentElement),dim=cs.getPropertyValue('--dim').trim(),line=cs.getPropertyValue('--line').trim(),fill=cs.getPropertyValue('--fill').trim();
+C=new Chart(cv,{type:'bar',data:{labels:d.labels.map(function(s){return d.bucket==='hour'?s.slice(11,13)+':00':s.slice(5)}),datasets:[{data:d.values,backgroundColor:fill,borderRadius:2,borderSkipped:false,minBarLength:3}]},options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:false},tooltip:{displayColors:false,callbacks:{title:function(i){var s=d.labels[i[0].dataIndex];return d.bucket==='hour'?s.replace('T',' ')+':00':s},label:function(c){return fmt(c.parsed.y)+' tokens'}}}},scales:{x:{grid:{display:false},border:{color:line},ticks:{color:dim,font:{size:10},maxRotation:0,autoSkipPadding:8}},y:{beginAtZero:true,grid:{color:line},border:{display:false},ticks:{color:dim,font:{size:10},maxTicksLimit:4,callback:function(v){return fmt(v)}}}}}})}
+var busy=false;
+function refresh(){if(busy)return;busy=true;var u='/usage?fragment=1&tokens='+R.tokens+'&traffic='+R.traffic+'&models='+R.models+'&t='+Date.now();fetch(u,{cache:'no-store'}).then(function(r){return r.text()}).then(function(h){U.innerHTML=h;drawChart();busy=false}).catch(function(){busy=false})}
+U.addEventListener('click',function(e){var b=e.target.closest('button[data-range]');if(!b)return;var sw=b.closest('[data-sw]');if(!sw)return;R[sw.getAttribute('data-sw')]=b.getAttribute('data-range');refresh()});
+drawChart();
+var box=document.getElementById('ar'),timer=null;
+function apply(){if(box.checked){if(!timer)timer=setInterval(refresh,30000)}else{if(timer){clearInterval(timer);timer=null}}}
+if(box){box.checked=localStorage.getItem('mira-ar')==='1';box.addEventListener('change',function(){localStorage.setItem('mira-ar',box.checked?'1':'0');apply();if(box.checked)refresh()});apply()}
+})()`;
+}
 
+export function renderUsagePage(snap: UsageSnapshot, now = Date.now(), off = 0, ranges = DEFAULT_RANGES): string {
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -502,6 +526,9 @@ export function renderUsagePage(snap: UsageSnapshot, now = Date.now(), offsetHou
 body{margin:0;padding:1.25rem 1.25rem 2.5rem;background:var(--bg);color:var(--fg);
  font:16px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
 main{max-width:34rem;margin:0 auto}
+.top{display:flex;justify-content:flex-end;align-items:center;margin:0 .15rem .35rem}
+.ar-l{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;letter-spacing:.02em;color:var(--dim);cursor:pointer;user-select:none}
+.ar-l input{width:.85rem;height:.85rem;accent-color:var(--fill);cursor:pointer;margin:0}
 .w{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.15rem;margin:0 0 .85rem}
 h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--dim)}
 .sh{display:flex;align-items:center;justify-content:space-between;gap:.6rem;font-size:.85rem;font-weight:600;letter-spacing:.02em;margin:0 0 .7rem .15rem;color:var(--fg)}
@@ -510,7 +537,6 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .sw button{appearance:none;-webkit-appearance:none;border:0;border-left:1px solid var(--line);background:transparent;color:var(--dim);font:inherit;font-size:.68rem;font-weight:500;letter-spacing:.01em;padding:.12rem .44rem;line-height:1.5;cursor:pointer}
 .sw button:first-child{border-left:0}
 .sw button.on{background:var(--fill);color:#fff}
-.rp[hidden]{display:none}
 .pct{margin:.1rem 0 0;font-size:1.75rem;font-weight:600;line-height:1.2;font-variant-numeric:tabular-nums}
 .of{font-size:.85rem;font-weight:400;color:var(--dim)}
 .bar{position:relative;height:6px;border-radius:99px;background:var(--line);margin:.75rem 0 .8rem}
@@ -540,12 +566,11 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .sm{font-size:.85rem;margin:0}
 </style>
 <main>
-  ${sectionHead(ICON_LIMITS, "Limits")}
-${rows || empty}
-${traffic}
-${tokens.section}
-${models}
-${tokens.chart ? '<script src="/usage/chart.js"></script>' : ""}
-<script>${toggleScript(tokens.chart)}</script>
-</main>`;
+  <div class="top"><label class="ar-l"><input type="checkbox" id="ar"><span>Auto-refresh</span></label></div>
+  <div id="u" data-tokens="${ranges.tokens}" data-traffic="${ranges.traffic}" data-models="${ranges.models}">
+${renderSections(snap, now, off, ranges)}
+  </div>
+</main>
+<script src="/usage/chart.js"></script>
+<script>${controller()}</script>`;
 }
