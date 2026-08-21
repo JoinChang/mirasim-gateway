@@ -8,20 +8,28 @@ export function usageRepo(db: DB) {
       db.insert(usageEvents).values(e).run();
     },
     /**
-     * One-row summary of downstream traffic since sinceMs: how many requests, how
-     * many succeeded (2xx), total and cache-read input tokens, and total latency.
-     * Only gateway requests reach usage_events — internal probes call the pool
-     * directly — so these denominators are real caller traffic, not noise.
+     * Per-day downstream traffic since sinceMs, bucketed by the operator's local
+     * day (see dailyTokens). Each row: requests, how many succeeded (2xx), total
+     * and cache-read input tokens, and total latency. Only gateway requests reach
+     * usage_events — probes call the pool directly — so these are real caller
+     * traffic. The window totals and the sparkline series are both derived from
+     * this one query.
      */
-    windowStats(sinceMs: number): {
+    dailyStats(
+      sinceMs: number,
+      offsetHours = 0,
+    ): {
+      day: string;
       requests: number;
       ok: number;
       inputTokens: number;
       cachedInputTokens: number;
       latencyMsTotal: number;
-    } {
-      const r = db
+    }[] {
+      const shift = `${offsetHours >= 0 ? "+" : ""}${offsetHours} hours`;
+      return db
         .select({
+          day: sql<string>`date(${usageEvents.ts} / 1000, 'unixepoch', ${shift})`,
           requests: sql<number>`count(*)`,
           ok: sql<number>`coalesce(sum(case when ${usageEvents.status} between 200 and 299 then 1 else 0 end), 0)`,
           inputTokens: sql<number>`coalesce(sum(${usageEvents.inputTokens}), 0)`,
@@ -30,14 +38,9 @@ export function usageRepo(db: DB) {
         })
         .from(usageEvents)
         .where(gte(usageEvents.ts, sinceMs))
-        .get();
-      return {
-        requests: r?.requests ?? 0,
-        ok: r?.ok ?? 0,
-        inputTokens: r?.inputTokens ?? 0,
-        cachedInputTokens: r?.cachedInputTokens ?? 0,
-        latencyMsTotal: r?.latencyMsTotal ?? 0,
-      };
+        .groupBy(sql`1`)
+        .orderBy(sql`1`)
+        .all();
     },
     /**
      * Tokens per day since sinceMs, oldest first, days with no traffic omitted.

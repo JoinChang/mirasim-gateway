@@ -376,18 +376,26 @@ describe("the stats row", () => {
   const now = Date.parse("2026-08-20T12:00:00Z");
   const base = { windows: [], serving: 1, total: 1, days: [], models: [], takenAt: now };
 
-  it("shows requests, success rate, cache-hit rate, and average latency", () => {
-    const stats = { requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 };
-    const html = renderUsagePage({ ...base, stats }, now);
+  const day0 = new Date(now).toISOString().slice(0, 10); // offset 0 → the newest axis day
+
+  it("shows the four totals, a title, and a sparkline per metric", () => {
+    const statsByDay = [
+      { day: day0, requests: 10, ok: 9, inputTokens: 1000, cachedInputTokens: 600, latencyMsTotal: 5000 },
+    ];
+    const html = renderUsagePage({ ...base, statsByDay }, now);
+    expect(html).toContain("Traffic"); // section title
     expect(html).toContain("Requests");
-    expect(html).toContain(">10<");
+    expect(html).toContain(">10<"); // request total
     expect(html).toMatch(/90\s*%/); // 9/10 succeeded
     expect(html).toMatch(/60\s*%/); // 600/1000 served from cache
     expect(html).toMatch(/500\s*ms/); // 5000ms / 10 requests
+    expect(html).toContain('class="spk"'); // a sparkline is drawn
+    expect((html.match(/<polyline/g) ?? []).length).toBe(4); // one per metric
   });
 
   it("omits the row entirely when there was no traffic", () => {
-    const stats = { requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 };
-    expect(renderUsagePage({ ...base, stats }, now)).not.toContain("Requests");
+    expect(renderUsagePage({ ...base, statsByDay: [] }, now)).not.toContain("Traffic");
+    const zero = [{ day: day0, requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 }];
+    expect(renderUsagePage({ ...base, statsByDay: zero }, now)).not.toContain("Traffic");
   });
 });

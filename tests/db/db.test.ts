@@ -31,7 +31,7 @@ describe("db client + repositories", () => {
     expect(k.findByHash("h1")?.enabled).toBe(0);
   });
 
-  it("usage.windowStats aggregates requests, successes, cache reads, and latency", () => {
+  it("usage.dailyStats aggregates per offset-shifted day: requests, ok, tokens, cache, latency", () => {
     const db = memDb();
     const u = usageRepo(db);
     const base = {
@@ -40,39 +40,40 @@ describe("db client + repositories", () => {
       dialect: "messages",
       model: "m",
       webSearchRequests: 0,
+      outputTokens: 0,
       viaRelay: 0,
       cost: null,
     };
+    // Two on 2026-08-20 UTC (one a 429); one at 20:00Z, which is 2026-08-21 at +8,
+    // so it lands on a separate local day.
     u.append({
-      ts: 2000,
+      ts: Date.parse("2026-08-20T04:00:00Z"),
       status: 200,
       inputTokens: 100,
       cachedInputTokens: 80,
-      outputTokens: 5,
       latencyMs: 300,
       ...base,
     });
     u.append({
-      ts: 3000,
+      ts: Date.parse("2026-08-20T05:00:00Z"),
+      status: 429,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      latencyMs: 20,
+      ...base,
+    });
+    u.append({
+      ts: Date.parse("2026-08-20T20:00:00Z"),
       status: 200,
       inputTokens: 50,
-      cachedInputTokens: 0,
-      outputTokens: 2,
+      cachedInputTokens: 10,
       latencyMs: 100,
       ...base,
     });
-    u.append({ ts: 4000, status: 429, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, latencyMs: 20, ...base });
-    u.append({
-      ts: 500,
-      status: 200,
-      inputTokens: 999,
-      cachedInputTokens: 999,
-      outputTokens: 0,
-      latencyMs: 999,
-      ...base,
-    }); // before window
-    const st = u.windowStats(1000);
-    expect(st).toEqual({ requests: 3, ok: 2, inputTokens: 150, cachedInputTokens: 80, latencyMsTotal: 420 });
+    expect(u.dailyStats(0, 8)).toEqual([
+      { day: "2026-08-20", requests: 2, ok: 1, inputTokens: 100, cachedInputTokens: 80, latencyMsTotal: 320 },
+      { day: "2026-08-21", requests: 1, ok: 1, inputTokens: 50, cachedInputTokens: 10, latencyMsTotal: 100 },
+    ]);
   });
 
   it("usage.dailyTokens groups by the offset-shifted local day", () => {

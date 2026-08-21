@@ -13,7 +13,8 @@ export interface ModelTokens {
   tokens: number;
 }
 
-export interface WindowStats {
+export interface DailyStat {
+  day: string;
   requests: number;
   ok: number;
   inputTokens: number;
@@ -27,7 +28,7 @@ export interface UsageSnapshot {
   total: number;
   days: DailyTokens[];
   models: ModelTokens[];
-  stats?: WindowStats;
+  statsByDay?: DailyStat[];
   takenAt: number;
 }
 
@@ -48,13 +49,7 @@ export function createUsageSource(
   listAccountIds: () => string[],
   listDailyTokens: (sinceMs: number) => DailyTokens[] = () => [],
   listModelTokens: (sinceMs: number) => ModelTokens[] = () => [],
-  listStats: (sinceMs: number) => WindowStats = () => ({
-    requests: 0,
-    ok: 0,
-    inputTokens: 0,
-    cachedInputTokens: 0,
-    latencyMsTotal: 0,
-  }),
+  listStats: (sinceMs: number) => DailyStat[] = () => [],
   ttlMs = 60_000,
 ) {
   let cached: UsageSnapshot | null = null;
@@ -71,8 +66,8 @@ export function createUsageSource(
     const since = now - (DAYS + 1) * 86400_000;
     const days = listDailyTokens(since);
     const models = listModelTokens(since);
-    const stats = listStats(since);
-    return { windows, serving: serving.length, total: ids.length, days, models, stats, takenAt: now };
+    const statsByDay = listStats(since);
+    return { windows, serving: serving.length, total: ids.length, days, models, statsByDay, takenAt: now };
   }
 
   return {
@@ -261,18 +256,76 @@ function renderModels(models: ModelTokens[]): string {
  * prompt caching, so this runs high), and how slow the average turn was. Omitted
  * when there was no traffic — an empty strip says less than no strip.
  */
-function renderStats(stats: WindowStats | undefined): string {
-  if (!stats || stats.requests === 0) return "";
+const ICON_TRAFFIC = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 9h3l2-5 3 10 2-6h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+
+/** A 14-point series as a min-max-normalized inline sparkline; flat sits mid. */
+function sparkline(values: number[]): string {
+  if (values.length < 2) return "";
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  const pts = values
+    .map((v, i) => `${((i / (values.length - 1)) * 100).toFixed(1)},${(17 - ((v - min) / range) * 14).toFixed(1)}`)
+    .join(" ");
+  return `<svg class="spk" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+}
+
+const ZERO_DAY = { requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 };
+
+/**
+ * The traffic section: four numbers over the window — requests, success rate,
+ * cache-hit rate (Claude Code leans on prompt caching, so it runs high), average
+ * latency — each with a 14-day sparkline of its own trend. Totals and trends are
+ * both derived from the per-day rows. Omitted when nothing ran.
+ */
+function renderStats(statsByDay: DailyStat[] | undefined, now: number, offsetHours: number): string {
+  if (!statsByDay || statsByDay.length === 0) return "";
+  const byDay = new Map(statsByDay.map((d) => [d.day, d]));
+  const series: DailyStat[] = [];
+  for (let i = DAYS - 1; i >= 0; i--) {
+    const day = dayKey(now - i * 86400_000, offsetHours);
+    series.push({ day, ...(byDay.get(day) ?? ZERO_DAY) });
+  }
+  const t = series.reduce(
+    (a, d) => ({
+      requests: a.requests + d.requests,
+      ok: a.ok + d.ok,
+      inputTokens: a.inputTokens + d.inputTokens,
+      cachedInputTokens: a.cachedInputTokens + d.cachedInputTokens,
+      latencyMsTotal: a.latencyMsTotal + d.latencyMsTotal,
+    }),
+    { ...ZERO_DAY },
+  );
+  if (t.requests === 0) return "";
   const rate = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)}%` : "—");
-  const lat = stats.latencyMsTotal / stats.requests;
-  const latStr = lat < 1000 ? `${Math.round(lat)}ms` : `${(lat / 1000).toFixed(1)}s`;
-  const tile = (label: string, value: string) =>
-    `<div class="stt"><span class="stv">${value}</span><span class="stl">${label}</span></div>`;
-  return `<section class="tr st">
-  ${tile("Requests", fmtTokens(stats.requests))}
-  ${tile("Success", rate(stats.ok, stats.requests))}
-  ${tile("Cache hit", rate(stats.cachedInputTokens, stats.inputTokens))}
-  ${tile("Avg latency", latStr)}
+  const avg = t.latencyMsTotal / t.requests;
+  const latStr = avg < 1000 ? `${Math.round(avg)}ms` : `${(avg / 1000).toFixed(1)}s`;
+  const tile = (label: string, value: string, values: number[]) =>
+    `<div class="stt"><span class="stv">${value}</span>${sparkline(values)}<span class="stl">${label}</span></div>`;
+  return `<section class="tr">
+  <h3 class="sh">${ICON_TRAFFIC}Traffic</h3>
+  <div class="st">
+  ${tile(
+    "Requests",
+    fmtTokens(t.requests),
+    series.map((d) => d.requests),
+  )}
+  ${tile(
+    "Success",
+    rate(t.ok, t.requests),
+    series.map((d) => (d.requests > 0 ? d.ok / d.requests : 0)),
+  )}
+  ${tile(
+    "Cache hit",
+    rate(t.cachedInputTokens, t.inputTokens),
+    series.map((d) => (d.inputTokens > 0 ? d.cachedInputTokens / d.inputTokens : 0)),
+  )}
+  ${tile(
+    "Avg latency",
+    latStr,
+    series.map((d) => (d.requests > 0 ? d.latencyMsTotal / d.requests : 0)),
+  )}
+  </div>
 </section>`;
 }
 
@@ -334,16 +387,18 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .mt{color:var(--dim);font-variant-numeric:tabular-nums;flex:none}
 .mb{height:4px;margin:.35rem 0 0}
 .dim{color:var(--dim)}
-.st{display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem}
-.stt{display:flex;flex-direction:column;gap:.15rem}
+.st{display:grid;grid-template-columns:repeat(4,1fr);gap:.7rem}
+.stt{display:flex;flex-direction:column;gap:.2rem;min-width:0}
 .stv{font-size:1.2rem;font-weight:600;font-variant-numeric:tabular-nums}
 .stl{font-size:.72rem;color:var(--dim);letter-spacing:.02em}
+.spk{width:100%;height:18px;display:block}
+.spk polyline{fill:none;stroke:var(--fill);stroke-width:1.5;vector-effect:non-scaling-stroke}
 .sm{font-size:.85rem;margin:0}
 </style>
 <main>
   <h3 class="sh">${ICON_LIMITS}Limits</h3>
 ${rows || empty}
-${renderStats(snap.stats)}
+${renderStats(snap.statsByDay, now, offsetHours)}
 ${renderChart(snap.days, now, offsetHours)}
 ${renderModels(snap.models)}
 </main>`;
