@@ -390,7 +390,9 @@ describe("the stats row", () => {
     expect(html).toMatch(/60\s*%/); // 600/1000 served from cache
     expect(html).toMatch(/500\s*ms/); // 5000ms / 10 requests
     expect(html).toContain('class="spk"'); // a sparkline is drawn
-    expect((html.match(/<polyline/g) ?? []).length).toBe(4); // one per metric
+    expect((html.match(/class="spk-l"/g) ?? []).length).toBe(4); // one line per metric
+    expect(html).toContain('class="spk-a"'); // area fill
+    expect(html).toContain('class="spk-d"'); // end dot
   });
 
   it("omits the row entirely when there was no traffic", () => {

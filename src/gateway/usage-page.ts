@@ -258,16 +258,38 @@ function renderModels(models: ModelTokens[]): string {
  */
 const ICON_TRAFFIC = `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M1 9h3l2-5 3 10 2-6h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
 
-/** A 14-point series as a min-max-normalized inline sparkline; flat sits mid. */
+/**
+ * A 14-point series as an inline sparkline: a smoothed line (Catmull-Rom control
+ * points), a soft area fill beneath it, and a dot on the latest point. Min-max
+ * normalized into a padded band so peaks and troughs are never clipped; a flat
+ * series sits mid. Self-contained SVG — no Chart.js.
+ */
 function sparkline(values: number[]): string {
-  if (values.length < 2) return "";
+  const n = values.length;
+  if (n < 2) return "";
   const max = Math.max(...values);
   const min = Math.min(...values);
-  const range = max - min || 1;
-  const pts = values
-    .map((v, i) => `${((i / (values.length - 1)) * 100).toFixed(1)},${(17 - ((v - min) / range) * 14).toFixed(1)}`)
-    .join(" ");
-  return `<svg class="spk" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+  const pt = (i: number): [number, number] => {
+    // A flat series has no range to normalize, so it sits mid rather than at the
+    // floor; otherwise map into a padded band, y in [3, 18].
+    const frac = max === min ? 0.5 : (values[i]! - min) / (max - min);
+    return [(i / (n - 1)) * 100, 18 - frac * 15];
+  };
+  const pts = values.map((_, i) => pt(i));
+  let d = `M ${pts[0]![0].toFixed(1)} ${pts[0]![1].toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const [p0x, p0y] = pts[i - 1] ?? pts[i]!;
+    const [p1x, p1y] = pts[i]!;
+    const [p2x, p2y] = pts[i + 1]!;
+    const [p3x, p3y] = pts[i + 2] ?? pts[i + 1]!;
+    const c1x = p1x + (p2x - p0x) / 6;
+    const c1y = p1y + (p2y - p0y) / 6;
+    const c2x = p2x - (p3x - p1x) / 6;
+    const c2y = p2y - (p3y - p1y) / 6;
+    d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2x.toFixed(1)} ${p2y.toFixed(1)}`;
+  }
+  const [lx, ly] = pts[n - 1]!;
+  return `<svg class="spk" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><path class="spk-a" d="${d} L 100 20 L 0 20 Z"/><path class="spk-l" d="${d}"/><circle class="spk-d" cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="1.6"/></svg>`;
 }
 
 const ZERO_DAY = { requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 };
@@ -391,8 +413,10 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .stt{display:flex;flex-direction:column;gap:.2rem;min-width:0}
 .stv{font-size:1.2rem;font-weight:600;font-variant-numeric:tabular-nums}
 .stl{font-size:.72rem;color:var(--dim);letter-spacing:.02em}
-.spk{width:100%;height:18px;display:block}
-.spk polyline{fill:none;stroke:var(--fill);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.spk{width:100%;height:20px;display:block;overflow:visible}
+.spk-l{fill:none;stroke:var(--fill);stroke-width:1.5;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
+.spk-a{fill:var(--fill);opacity:.12;stroke:none}
+.spk-d{fill:var(--fill)}
 .sm{font-size:.85rem;margin:0}
 </style>
 <main>
