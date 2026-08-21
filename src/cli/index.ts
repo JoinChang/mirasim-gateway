@@ -6,6 +6,7 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { summarize } from "../accounts/budget.js";
 import { fetchLimits } from "../accounts/limits.js";
+import { requestCode, verifyCode } from "../accounts/login.js";
 import { checkReachability } from "../accounts/reachability.js";
 import { accountStore } from "../accounts/store.js";
 import { type AppConfig, loadConfigFromDisk } from "../config/index.js";
@@ -329,6 +330,37 @@ async function cmdAccountsAdd(cfg: AppConfig, flags: Record<string, string | boo
   log(`added ${claims.email ?? claims.sub} (plan=${claims.plan ?? "?"})`);
 }
 
+/**
+ * Two-step email-code login, minting an account's first refresh token without a
+ * working app install. `--email` alone asks the host to email a code; add
+ * `--code` to verify it and store the account. Two calls rather than an
+ * interactive prompt because the CLI is normally reached through
+ * `docker compose exec -T`, which has no TTY to read a code from.
+ */
+async function cmdAccountsLogin(cfg: AppConfig, flags: Record<string, string | boolean>) {
+  const email = (typeof flags.email === "string" ? flags.email : "").trim();
+  if (!email) {
+    log("usage: accounts login --email <email> [--code <code>]");
+    process.exit(1);
+  }
+  if (typeof flags.code !== "string" || !flags.code) {
+    const { devCode } = await requestCode(cfg.loginBase, email);
+    log(`code sent to ${email}${devCode ? ` (dev_code=${devCode})` : ""}`);
+    log(`then run: accounts login --email ${email} --code <code>`);
+    return;
+  }
+  const { accessToken, refreshToken } = await verifyCode(cfg.loginBase, email, String(flags.code));
+  const claims = decodeJwt(accessToken) ?? {};
+  const { store } = storeFor(cfg);
+  store.add({
+    id: claims.sub ?? `acct-${crypto.randomBytes(3).toString("hex")}`,
+    email: claims.email ?? email,
+    plan: claims.plan ?? "",
+    refreshToken,
+  });
+  log(`added ${claims.email ?? email} (plan=${claims.plan ?? "?"})`);
+}
+
 function cmdAccountsList(cfg: AppConfig) {
   const { store } = storeFor(cfg);
   const now = Date.now();
@@ -415,6 +447,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     case "accounts":
       if (_[1] === "import") return cmdAccountsImport(cfg, flags);
       if (_[1] === "add") return cmdAccountsAdd(cfg, flags);
+      if (_[1] === "login") return cmdAccountsLogin(cfg, flags);
       if (_[1] === "list") return cmdAccountsList(cfg);
       if (_[1] === "remove") return cmdAccountsRemove(cfg, _[2]!);
       if (_[1] === "exercise") return cmdAccountsExercise(cfg, flags);
@@ -436,7 +469,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       break;
   }
   log(
-    "usage: mirasim-gateway <serve|migrate|usage|accounts (import|add|list|remove|exercise|check|limits)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
+    "usage: mirasim-gateway <serve|migrate|usage|accounts (import|add|login|list|remove|exercise|check|limits)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
   );
   process.exit(1);
 }

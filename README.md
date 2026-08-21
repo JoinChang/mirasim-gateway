@@ -31,6 +31,7 @@ serve                                   start (auto-migrates)
 migrate                                 apply DB migrations
 accounts import [--from accounts.json]  migrate encrypted accounts + device.pem
 accounts add [--token <rt>]             add one (validates via /auth/refresh)
+accounts login --email E [--code C]     email-code login: --email sends a code, add --code to add
 accounts list | remove <id>
 accounts check                          per account: is the relay serving again? (free)
 keys mint --label L [--rpm N] [--daily-tokens N] | list | revoke <id>
