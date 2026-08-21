@@ -169,4 +169,17 @@ describe("meterStream heartbeat", () => {
     src.close();
     await done;
   });
+
+  it("defaults to a 10s idle window (real gaps sit right around it)", async () => {
+    vi.useFakeTimers();
+    const src = controllable();
+    const { out, done } = collect(meterStream(src.stream, () => {})); // no interval arg → default
+    src.push(sse("message_start", { type: "message_start", message: { usage: { input_tokens: 1 } } }));
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(out.join("")).not.toContain(": ping"); // a ~9s pause must not ping
+    await vi.advanceTimersByTimeAsync(2_000); // past 10s now
+    expect(out.join("")).toContain(": ping");
+    src.close();
+    await done;
+  });
 });

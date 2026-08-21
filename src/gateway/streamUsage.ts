@@ -96,13 +96,14 @@ const PING = new TextEncoder().encode(": ping\n\n");
  * big prefill or an extended-thinking pause — mid-response. Bedrock via the
  * relay sends no ping of its own (measured: zero keepalive frames), so this is
  * the only keepalive on the wire. The `:` lines are SSE comments, so the client
- * ignores them and they bypass the scanner — metering is untouched. Pass
- * `heartbeatMs = 0` to disable.
+ * ignores them and they bypass the scanner — metering is untouched. The default
+ * is 10s because measured mid-stream thinking pauses sit right around it (a real
+ * turn showed a 14s gap). Pass `heartbeatMs = 0` to disable.
  */
 export function meterStream(
   body: ReadableStream<Uint8Array>,
   onDone: (u: StreamUsage) => void,
-  heartbeatMs = 15_000,
+  heartbeatMs = 10_000,
 ): ReadableStream<Uint8Array> {
   const scanner = createUsageScanner();
   const decoder = new TextDecoder();
