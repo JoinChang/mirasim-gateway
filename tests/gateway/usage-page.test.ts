@@ -208,10 +208,14 @@ describe("renderUsagePage (the shell)", () => {
     expect(html).not.toMatch(/usr_|acct_|key_|sk-ant|[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
   });
 
-  it("carries an auto-refresh toggle and a swappable section container", () => {
+  it("carries an auto-refresh toggle on the Limits header, above the swap region", () => {
     const html = renderUsagePage(snap);
     expect(html).toContain('id="ar"'); // the auto-refresh checkbox
     expect(html).toContain("Auto-refresh");
+    // The toggle sits on the right of the Limits title (same header row)...
+    expect(html).toMatch(/Limits<\/span><label class="ar-l"/);
+    // ...and above #u, so an auto-refresh swap never replaces it.
+    expect(html.indexOf("Auto-refresh")).toBeLessThan(html.indexOf('<div id="u"'));
     expect(html).toMatch(/<div id="u"[^>]*data-tokens="7d"/); // the swap target, seeded with its ranges
   });
 
@@ -296,14 +300,26 @@ describe("renderSections (the fragment)", () => {
       bucket: string;
     };
 
-  it("returns inner HTML with no document shell or controller", () => {
-    const frag = renderSections(mkSnap(now, { "7d": { days: [{ day: day(0), tokens: 100 }] } }), now);
+  it("returns inner HTML with no document shell, controller, or the persistent toggle", () => {
+    const frag = renderSections(
+      mkSnap(
+        now,
+        { "7d": { days: [{ day: day(0), tokens: 100 }] } },
+        {
+          windows: [
+            { name: "7d", usedCents: 1, budgetCents: 100, resetAt: 2_000_000_000, accounts: 1, staggered: false },
+          ],
+        },
+      ),
+      now,
+    );
     expect(frag).not.toContain("<!doctype");
     expect(frag).not.toContain("<html");
     expect(frag).not.toContain("<head");
     expect(frag).not.toContain('src="/usage/chart.js"'); // the shell owns the library tag
     expect(frag).not.toContain("addEventListener"); // and the controller
-    expect(frag).toContain("Limits");
+    expect(frag).not.toContain("Auto-refresh"); // and the persistent toggle
+    expect(frag).toContain('class="w"'); // but the limits cards ARE here — they refresh
     expect(frag).toContain("Token Usage");
   });
 

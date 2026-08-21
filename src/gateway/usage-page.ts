@@ -468,16 +468,16 @@ function renderLimits(snap: UsageSnapshot, now: number): string {
 }
 
 /**
- * The swappable region: Limits plus the three switchable sections, each at its
- * selected range. This is what a `?fragment=1` request returns and what the
- * client drops into `#u` on a switch or an auto-refresh tick — no doctype, no
- * head, no controller script; those live in the shell and persist across swaps.
- * The page is deliberately anonymous: totals only, never an account id, an email
- * or a per-account figure.
+ * The swappable region: the limit cards plus the three switchable sections,
+ * each at its selected range. This is what a `?fragment=1` request returns and
+ * what the client drops into `#u` on a switch or an auto-refresh tick — no
+ * doctype, no head, no controller, and not the Limits header/auto-refresh
+ * toggle; those live in the shell and persist across swaps. The page is
+ * deliberately anonymous: totals only, never an account id, an email or a
+ * per-account figure.
  */
 export function renderSections(snap: UsageSnapshot, now = Date.now(), off = 0, ranges = DEFAULT_RANGES): string {
-  return `  ${sectionHead(ICON_LIMITS, "Limits")}
-${renderLimits(snap, now)}
+  return `${renderLimits(snap, now)}
 ${renderTraffic(snap.byRange, ranges.traffic, now, off)}
 ${renderTokenUsage(snap.byRange, ranges.tokens, now, off)}
 ${renderModels(snap.byRange, ranges.models)}`;
@@ -526,8 +526,7 @@ export function renderUsagePage(snap: UsageSnapshot, now = Date.now(), off = 0, 
 body{margin:0;padding:1.25rem 1.25rem 2.5rem;background:var(--bg);color:var(--fg);
  font:16px/1.5 ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
 main{max-width:34rem;margin:0 auto}
-.top{display:flex;justify-content:flex-end;align-items:center;margin:0 .15rem .35rem}
-.ar-l{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;letter-spacing:.02em;color:var(--dim);cursor:pointer;user-select:none}
+.ar-l{display:inline-flex;align-items:center;gap:.4rem;font-size:.72rem;font-weight:400;letter-spacing:.02em;color:var(--dim);cursor:pointer;user-select:none}
 .ar-l input{width:.85rem;height:.85rem;accent-color:var(--fill);cursor:pointer;margin:0}
 .w{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.15rem;margin:0 0 .85rem}
 h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--dim)}
@@ -566,7 +565,7 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .sm{font-size:.85rem;margin:0}
 </style>
 <main>
-  <div class="top"><label class="ar-l"><input type="checkbox" id="ar"><span>Auto-refresh</span></label></div>
+  <h3 class="sh"><span class="sht">${ICON_LIMITS}Limits</span><label class="ar-l"><input type="checkbox" id="ar"><span>Auto-refresh</span></label></h3>
   <div id="u" data-tokens="${ranges.tokens}" data-traffic="${ranges.traffic}" data-models="${ranges.models}">
 ${renderSections(snap, now, off, ranges)}
   </div>
