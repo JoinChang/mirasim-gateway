@@ -17,7 +17,7 @@ import type { Recorder } from "../usage/recorder.js";
 import { chartAsset } from "./chart-asset.js";
 import { explainRelayError } from "./relayErrors.js";
 import { meterStream } from "./streamUsage.js";
-import { createUsageSource, renderUsagePage } from "./usage-page.js";
+import { createUsageSource, parseRange, renderUsagePage } from "./usage-page.js";
 import { applyModelAlias, sha256Hex, utcDayStartMs } from "./util.js";
 
 type Vars = { key?: DownstreamKey; openMode?: boolean };
@@ -202,9 +202,9 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
   const usage = createUsageSource(
     deps.pool,
     () => deps.store.list().map((a) => a.id),
-    (sinceMs) => deps.usage.dailyTokens(sinceMs, cfg.usageTzOffsetHours),
+    (sinceMs, bucket) => deps.usage.dailyTokens(sinceMs, cfg.usageTzOffsetHours, bucket),
     (sinceMs) => deps.usage.modelTokens(sinceMs),
-    (sinceMs) => deps.usage.dailyStats(sinceMs, cfg.usageTzOffsetHours),
+    (sinceMs, bucket) => deps.usage.dailyStats(sinceMs, cfg.usageTzOffsetHours, bucket),
   );
 
   // Immutable: the filename is only ever bumped by a dependency upgrade, and the
@@ -222,8 +222,14 @@ export function createApp(deps: AppDeps): Hono<{ Variables: Vars }> {
 
   app.get("/usage", async (c) => {
     const snap = await usage.get();
-    if (/application\/json/.test(c.req.header("accept") ?? "") || /[?&]format=json/.test(c.req.url))
-      return c.json(snap);
+    // The API: `?format=json&range=24h|7d|30d` returns the account state plus one
+    // range's windowed numbers, flattened. The page pre-renders all three and
+    // switches client-side, so it needs the whole snapshot instead.
+    if (/application\/json/.test(c.req.header("accept") ?? "") || /[?&]format=json/.test(c.req.url)) {
+      const range = parseRange(c.req.query("range"));
+      const { windows, serving, total, takenAt } = snap;
+      return c.json({ windows, serving, total, takenAt, range, ...snap.byRange[range] });
+    }
     return c.html(renderUsagePage(snap, Date.now(), cfg.usageTzOffsetHours), 200, {
       // A minute-old number is fine to reuse; a stale one for longer is not.
       "cache-control": "public, max-age=30",

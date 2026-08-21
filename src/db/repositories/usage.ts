@@ -2,22 +2,42 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import type { DB } from "../client.js";
 import { type UsageEvent, usageEvents } from "../schema.js";
 
+/** Day or hour granularity for the time-bucketed queries. */
+export type Bucket = "day" | "hour";
+
+/**
+ * The SQLite expression that names the local-time bucket a row falls in.
+ *
+ * `date(...)` yields `YYYY-MM-DD`; `strftime('%Y-%m-%dT%H', ...)` yields
+ * `YYYY-MM-DDTHH`. Both match the ISO-string slice the usage page uses to line
+ * each row up with an axis tick, so a day bucket and an hour bucket are read the
+ * same way downstream. The `+N hours` modifier shifts the boundary onto the
+ * operator's local clock.
+ */
+function bucketExpr(offsetHours: number, bucket: Bucket) {
+  const shift = `${offsetHours >= 0 ? "+" : ""}${offsetHours} hours`;
+  return bucket === "hour"
+    ? sql<string>`strftime('%Y-%m-%dT%H', ${usageEvents.ts} / 1000, 'unixepoch', ${shift})`
+    : sql<string>`date(${usageEvents.ts} / 1000, 'unixepoch', ${shift})`;
+}
+
 export function usageRepo(db: DB) {
   return {
     append(e: UsageEvent): void {
       db.insert(usageEvents).values(e).run();
     },
     /**
-     * Per-day downstream traffic since sinceMs, bucketed by the operator's local
-     * day (see dailyTokens). Each row: requests, how many succeeded (2xx), total
-     * and cache-read input tokens, and total latency. Only gateway requests reach
-     * usage_events — probes call the pool directly — so these are real caller
-     * traffic. The window totals and the sparkline series are both derived from
-     * this one query.
+     * Per-bucket downstream traffic since sinceMs, bucketed by the operator's
+     * local day (or hour — see bucketExpr). Each row: requests, how many
+     * succeeded (2xx), total and cache-read input tokens, and total latency. Only
+     * gateway requests reach usage_events — probes call the pool directly — so
+     * these are real caller traffic. The window totals and the sparkline series
+     * are both derived from this one query.
      */
     dailyStats(
       sinceMs: number,
       offsetHours = 0,
+      bucket: Bucket = "day",
     ): {
       day: string;
       requests: number;
@@ -26,10 +46,9 @@ export function usageRepo(db: DB) {
       cachedInputTokens: number;
       latencyMsTotal: number;
     }[] {
-      const shift = `${offsetHours >= 0 ? "+" : ""}${offsetHours} hours`;
       return db
         .select({
-          day: sql<string>`date(${usageEvents.ts} / 1000, 'unixepoch', ${shift})`,
+          day: bucketExpr(offsetHours, bucket),
           requests: sql<number>`count(*)`,
           ok: sql<number>`coalesce(sum(case when ${usageEvents.status} between 200 and 299 then 1 else 0 end), 0)`,
           inputTokens: sql<number>`coalesce(sum(${usageEvents.inputTokens}), 0)`,
@@ -43,19 +62,19 @@ export function usageRepo(db: DB) {
         .all();
     },
     /**
-     * Tokens per day since sinceMs, oldest first, days with no traffic omitted.
-     * Rows carrying no tokens are excluded so a day of nothing-but-failures (a
-     * 429 or an empty response is recorded with zero tokens) does not draw as a
-     * zero-height bar. Internal probes never reach here — only gateway requests
-     * are recorded — so every row is real downstream traffic either way.
+     * Tokens per bucket since sinceMs, oldest first, buckets with no traffic
+     * omitted. Rows carrying no tokens are excluded so a bucket of
+     * nothing-but-failures (a 429 or an empty response is recorded with zero
+     * tokens) does not draw as a zero-height bar. Internal probes never reach
+     * here — only gateway requests are recorded — so every row is real downstream
+     * traffic either way.
      */
-    dailyTokens(sinceMs: number, offsetHours = 0): { day: string; tokens: number }[] {
-      // Bucket by the operator's local day, not UTC: `date(..., '+8 hours')`
+    dailyTokens(sinceMs: number, offsetHours = 0, bucket: Bucket = "day"): { day: string; tokens: number }[] {
+      // Bucket by the operator's local day/hour, not UTC: the `+8 hours` modifier
       // shifts the boundary so 00:00–08:00 local traffic is not booked yesterday.
-      const shift = `${offsetHours >= 0 ? "+" : ""}${offsetHours} hours`;
       return db
         .select({
-          day: sql<string>`date(${usageEvents.ts} / 1000, 'unixepoch', ${shift})`,
+          day: bucketExpr(offsetHours, bucket),
           tokens: sql<number>`sum(${usageEvents.inputTokens} + ${usageEvents.outputTokens})`,
         })
         .from(usageEvents)

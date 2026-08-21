@@ -96,6 +96,74 @@ describe("db client + repositories", () => {
     expect(u.dailyTokens(0, 8).find((d) => d.day === "2026-08-21")?.tokens).toBe(10);
   });
 
+  it("usage.dailyTokens buckets by the offset-shifted hour when asked", () => {
+    const db = memDb();
+    const u = usageRepo(db);
+    const base = {
+      downstreamKeyId: null,
+      accountId: null,
+      dialect: "messages",
+      model: "m",
+      webSearchRequests: 0,
+      viaRelay: 0,
+      cost: null,
+      latencyMs: 0,
+      status: 200,
+    };
+    // Same local day, two different local hours at +8: 04:00Z → 12:00 local,
+    // 05:30Z → 13:30 local. The hour key is `YYYY-MM-DDTHH`, matching the ISO
+    // slice the page uses to line rows up with the axis.
+    u.append({ ts: Date.parse("2026-08-20T04:00:00Z"), inputTokens: 10, outputTokens: 0, ...base });
+    u.append({ ts: Date.parse("2026-08-20T05:30:00Z"), inputTokens: 5, outputTokens: 0, ...base });
+    expect(u.dailyTokens(0, 8, "hour")).toEqual([
+      { day: "2026-08-20T12", tokens: 10 },
+      { day: "2026-08-20T13", tokens: 5 },
+    ]);
+  });
+
+  it("usage.dailyStats buckets by the offset-shifted hour when asked", () => {
+    const db = memDb();
+    const u = usageRepo(db);
+    const base = {
+      downstreamKeyId: null,
+      accountId: null,
+      dialect: "messages",
+      model: "m",
+      webSearchRequests: 0,
+      outputTokens: 0,
+      viaRelay: 0,
+      cost: null,
+    };
+    u.append({
+      ts: Date.parse("2026-08-20T04:00:00Z"),
+      status: 200,
+      inputTokens: 100,
+      cachedInputTokens: 80,
+      latencyMs: 300,
+      ...base,
+    });
+    u.append({
+      ts: Date.parse("2026-08-20T04:30:00Z"),
+      status: 429,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      latencyMs: 20,
+      ...base,
+    });
+    u.append({
+      ts: Date.parse("2026-08-20T05:00:00Z"),
+      status: 200,
+      inputTokens: 50,
+      cachedInputTokens: 10,
+      latencyMs: 100,
+      ...base,
+    });
+    expect(u.dailyStats(0, 8, "hour")).toEqual([
+      { day: "2026-08-20T12", requests: 2, ok: 1, inputTokens: 100, cachedInputTokens: 80, latencyMsTotal: 320 },
+      { day: "2026-08-20T13", requests: 1, ok: 1, inputTokens: 50, cachedInputTokens: 10, latencyMsTotal: 100 },
+    ]);
+  });
+
   it("usage.dailyTokensForKey sums in+out since day start", () => {
     const db = memDb();
     const u = usageRepo(db);
