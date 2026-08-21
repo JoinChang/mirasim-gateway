@@ -504,6 +504,15 @@ describe("the traffic row", () => {
     expect(html).toMatch(/\.spk-d\{[^}]*stroke-linecap:round/);
   });
 
+  it("scales the sparkline uniformly so line/dot are one pixel size on every device", () => {
+    // preserveAspectRatio="none" scales x and y unequally, which makes
+    // non-scaling-stroke ambiguous (mobile vs desktop render different widths).
+    // Uniform scaling keeps the stroke a constant pixel size everywhere.
+    const html = page({ "7d": { statsByDay: [stat] } });
+    expect(html).not.toContain('preserveAspectRatio="none"');
+    expect(html).toMatch(/\.spk\{[^}]*height:auto/);
+  });
+
   it("omits the row entirely when no range had traffic", () => {
     expect(page({})).not.toContain("Traffic");
     const zero = [{ day: day0, requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 }];

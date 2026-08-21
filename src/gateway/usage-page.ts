@@ -367,11 +367,12 @@ function sparkline(values: number[]): string {
     d += ` C ${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2x.toFixed(1)} ${p2y.toFixed(1)}`;
   }
   const [lx, ly] = pts[n - 1]!;
-  // The dot is a round-capped, zero-ish-length stroke rather than a <circle>:
-  // the SVG is drawn with preserveAspectRatio="none", which scales x and y
-  // unequally, and a circle's radius would scale with it into an ellipse. A
-  // non-scaling stroke with a round cap paints a true pixel circle regardless.
-  return `<svg class="spk" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true"><path class="spk-a" d="${d} L 100 20 L 0 20 Z"/><path class="spk-l" d="${d}"/><path class="spk-d" d="M ${lx.toFixed(1)} ${ly.toFixed(1)} l 0.01 0"/></svg>`;
+  // The dot is a round-capped, zero-ish-length stroke rather than a <circle>,
+  // and the SVG scales uniformly (no preserveAspectRatio="none"): under uniform
+  // scale a non-scaling stroke is unambiguous, so the line and dot are a constant
+  // pixel size on every device. Non-uniform stretching made mobile and desktop
+  // disagree on that width, and would have squashed the dot into an ellipse.
+  return `<svg class="spk" viewBox="0 0 100 20" aria-hidden="true"><path class="spk-a" d="${d} L 100 20 L 0 20 Z"/><path class="spk-l" d="${d}"/><path class="spk-d" d="M ${lx.toFixed(1)} ${ly.toFixed(1)} l 0.01 0"/></svg>`;
 }
 
 const ZERO_BUCKET = { requests: 0, ok: 0, inputTokens: 0, cachedInputTokens: 0, latencyMsTotal: 0 };
@@ -557,7 +558,7 @@ h2{font-size:.85rem;font-weight:500;letter-spacing:.02em;margin:0;color:var(--di
 .stt{display:flex;flex-direction:column;gap:.2rem;min-width:0}
 .stv{font-size:1.2rem;font-weight:600;font-variant-numeric:tabular-nums}
 .stl{font-size:.72rem;color:var(--dim);letter-spacing:.02em}
-.spk{width:100%;height:20px;display:block;overflow:visible}
+.spk{width:100%;height:auto;display:block;overflow:visible}
 .spk-l{fill:none;stroke:var(--fill);stroke-width:1.5;vector-effect:non-scaling-stroke;stroke-linecap:round;stroke-linejoin:round}
 .spk-a{fill:var(--fill);opacity:.12;stroke:none}
 .spk-d{fill:none;stroke:var(--fill);stroke-width:3.2;stroke-linecap:round;vector-effect:non-scaling-stroke}
