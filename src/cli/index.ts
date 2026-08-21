@@ -66,6 +66,10 @@ async function cmdServe(cfg: AppConfig) {
     closing = true;
     log(`${sig} received — draining in-flight requests`);
     server.close(() => process.exit(0));
+    // close() also waits for idle keep-alive sockets, which never close on their
+    // own — so drop the idle ones now; active streams keep going until they
+    // finish. Without this an idle recreate hangs until docker SIGKILLs it (137).
+    (server as unknown as { closeIdleConnections?: () => void }).closeIdleConnections?.();
     setTimeout(() => process.exit(0), 20_000).unref();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
