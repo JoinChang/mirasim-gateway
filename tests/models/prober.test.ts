@@ -25,6 +25,14 @@ describe("createProber.runOnce", () => {
     expect(requests.map((r) => r.model).sort()).toEqual(["claude-opus-5", "gpt-5.6-sol"]);
   });
 
+  it("probes exactly the models it is handed, bypassing the staleness cycle", async () => {
+    const { prober, repo, requests } = setup();
+    repo.markOk("claude-opus-5", Date.now(), null); // fresh — the cycle would skip it
+    repo.markOk("gpt-5.6-sol", Date.now(), null);
+    await prober.runOnce(["claude-opus-5"]);
+    expect(requests.map((r) => r.model)).toEqual(["claude-opus-5"]);
+  });
+
   it("spends nothing when every verdict is still fresh", async () => {
     const { prober, repo, requests } = setup();
     repo.markOk("claude-opus-5", Date.now(), null);

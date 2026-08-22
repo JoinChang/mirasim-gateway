@@ -34,6 +34,12 @@ export function modelStatusRepo(db: DB) {
         })
         .run();
     },
+    /** Reset a verdict to "unknown" so the gate stops blocking it and the next
+     *  real request (or probe) can re-decide — for unsticking a model that a
+     *  transient 5xx wrongly marked unavailable. No-op if the model is unknown. */
+    clear(model: string): void {
+      db.update(modelStatus).set({ state: "unknown", consecutiveFails: 0 }).where(eq(modelStatus.model, model)).run();
+    },
     /** Register models the relay advertises, without overwriting what we already learned. */
     seed(models: string[]): void {
       for (const model of models)

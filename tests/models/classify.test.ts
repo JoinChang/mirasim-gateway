@@ -71,8 +71,13 @@ describe("classifyOutcome", () => {
     expect(classifyOutcome(429, h, { errorType: "rate_limited" })).toEqual({ kind: "account_throttled" });
   });
 
-  it("5xx means the model service is unavailable", () => {
+  it("only a 503 (no deployment) marks the model unavailable; other 5xx are transient", () => {
+    // 503 is the relay's 'no deployment for this model group'. A 500/501/502/504
+    // is a timeout or bad gateway — the deployment exists, it was slow or flaky —
+    // and treating it as a model verdict black-holes a working model for the TTL
+    // (both opus-5 on a 504 and sonnet-5 on a 501 were marked dead this way).
     expect(classifyOutcome(503, hdrs({}))).toEqual({ kind: "model_unavailable", status: 503 });
+    for (const s of [500, 501, 502, 504]) expect(classifyOutcome(s, hdrs({}))).toEqual({ kind: "ignored" });
   });
 
   it("ordinary 4xx says nothing about the model or the account", () => {

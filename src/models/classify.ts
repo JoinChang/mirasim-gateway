@@ -139,7 +139,13 @@ export function classifyOutcome(
     if (opts.errorType && TRANSIENT_ERROR_TYPES.test(opts.errorType)) return { kind: "account_throttled" };
     return { kind: "model_unavailable", status };
   }
-  if (status >= 500) return { kind: "model_unavailable", status };
+  // Only 503 is the relay's "no deployment for this model group" — the durable
+  // one (every dead anthropic/* id returns it). A 500/501/502/504 is a timeout or
+  // bad gateway: the deployment exists, it was slow or flaky. Blaming the model
+  // there black-holes a working one for the whole TTL — opus-5 on a 504 and
+  // sonnet-5 on a 501 were both marked dead this way. They stay transient (the
+  // pool already retries a 5xx by status) and never become a model verdict.
+  if (status === 503) return { kind: "model_unavailable", status };
   if (status === 403 && ENTITLEMENT_REFUSAL.test(`${opts.errorType ?? ""} ${opts.errorMessage ?? ""}`))
     return { kind: "account_refused", reason: "entitlement", status };
   return { kind: "ignored" };

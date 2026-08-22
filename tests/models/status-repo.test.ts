@@ -51,6 +51,14 @@ describe("modelStatusRepo", () => {
     expect(row.consecutiveFails).toBe(0);
   });
 
+  it("clear resets an unavailable verdict back to unknown so the gate stops blocking it", () => {
+    repo.markUnavailable("claude-opus-5", 2000, 504);
+    repo.clear("claude-opus-5");
+    const row = repo.get("claude-opus-5")!;
+    expect(row.state).toBe("unknown");
+    expect(row.consecutiveFails).toBe(0);
+  });
+
   it("seed adds unseen models as unknown and leaves known verdicts alone", () => {
     repo.markUnavailable("gpt-5.6-sol", 2000, 429);
     repo.seed(["gpt-5.6-sol", "claude-opus-5"]);

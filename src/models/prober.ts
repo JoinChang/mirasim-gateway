@@ -4,8 +4,10 @@ import type { ModelStatusRepo } from "../db/repositories/modelStatus.js";
 import { selectProbeTargets } from "./probe.js";
 
 export interface Prober {
-  /** Probe this cycle's targets. Returns the models actually probed. */
-  runOnce(): Promise<string[]>;
+  /** Probe this cycle's targets, or exactly `only` when given (to re-check a
+   *  specific model on demand rather than waiting for the staleness cycle).
+   *  Returns the models actually probed. */
+  runOnce(only?: string[]): Promise<string[]>;
   /** Begin the periodic loop. Returns a function that stops it. */
   start(): () => void;
 }
@@ -37,11 +39,13 @@ export function createProber(opts: {
     await response.text().catch(() => "");
   }
 
-  async function runOnce(): Promise<string[]> {
-    const targets = selectProbeTargets(opts.repo.list(), now(), {
-      ttlMs: opts.cfg.modelProbeTtlMs,
-      max: opts.cfg.modelProbeMaxPerCycle,
-    });
+  async function runOnce(only?: string[]): Promise<string[]> {
+    const targets = only?.length
+      ? only
+      : selectProbeTargets(opts.repo.list(), now(), {
+          ttlMs: opts.cfg.modelProbeTtlMs,
+          max: opts.cfg.modelProbeMaxPerCycle,
+        });
     const done: string[] = [];
     const inconclusive: string[] = [];
     for (const model of targets) {

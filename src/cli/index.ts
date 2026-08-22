@@ -291,10 +291,31 @@ async function cmdUsage(cfg: AppConfig) {
   process.exit(0);
 }
 
-async function cmdModelsProbe(cfg: AppConfig) {
+async function cmdModelsProbe(cfg: AppConfig, flags: Record<string, string | boolean>) {
   const rt = buildRuntime(cfg);
-  const done = await rt.prober.runOnce();
+  // `--models a,b` re-checks exactly those, bypassing the staleness cycle — the
+  // only way to re-verify a specific model without waiting behind staler ones.
+  const only =
+    typeof flags.models === "string"
+      ? flags.models
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : undefined;
+  const done = await rt.prober.runOnce(only);
   log(done.length ? `probed ${done.length}: ${done.join(", ")}` : "nothing due for probing");
+}
+
+/** Reset a model's verdict to "unknown" so the gate stops blocking it and the
+ *  next request (or probe) can re-decide — for unsticking one a transient 5xx
+ *  wrongly marked unavailable. */
+function cmdModelsClear(cfg: AppConfig, model: string | undefined) {
+  if (!model) {
+    log("usage: models clear <model>");
+    process.exit(1);
+  }
+  buildRuntime(cfg).modelStatus.clear(model);
+  log(`cleared ${model} — verdict reset to unknown`);
 }
 
 function storeFor(cfg: AppConfig) {
@@ -484,11 +505,12 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       break;
     case "models":
       if (_[1] === "status") return cmdModelsStatus(cfg);
-      if (_[1] === "probe") return cmdModelsProbe(cfg);
+      if (_[1] === "probe") return cmdModelsProbe(cfg, flags);
+      if (_[1] === "clear") return cmdModelsClear(cfg, _[2]);
       break;
   }
   log(
-    "usage: mirasim-gateway <serve|migrate|usage|accounts (import|add|login|list|remove|exercise|check|limits)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe)>",
+    "usage: mirasim-gateway <serve|migrate|usage|accounts (import|add|login|list|remove|exercise|check|limits)|keys (mint|list|revoke)|device (from-app|show)|models (status|probe [--models a,b]|clear <model>)>",
   );
   process.exit(1);
 }
